@@ -13,6 +13,8 @@ final getActiveFilmsProvider =
     Provider((ref) => GetActiveFilms(ref.watch(filmsRepositoryProvider)));
 final getNowShowingFilmProvider =
     Provider((ref) => GetNowShowingFilm(ref.watch(filmsRepositoryProvider)));
+final getFilmByIdProvider =
+    Provider((ref) => GetFilmById(ref.watch(filmsRepositoryProvider)));
 
 /// Catalog loaded on entry; `ref.invalidate` to refetch. Errors surface as
 /// `AsyncError` carrying an `ApiException`.
@@ -29,4 +31,9 @@ final filmsNotifierProvider =
 /// The currently premiering film (null if none).
 final nowShowingFilmProvider = FutureProvider.autoDispose<Film?>(
   (ref) => ref.watch(getNowShowingFilmProvider)(),
+);
+
+/// Individual film by ID.
+final filmByIdProvider = FutureProvider.autoDispose.family<Film, String>(
+  (ref, id) => ref.watch(getFilmByIdProvider)(id),
 );

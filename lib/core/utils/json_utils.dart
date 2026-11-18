@@ -38,7 +38,7 @@ abstract class JsonUtils {
     return null;
   }
 
-  static num number(Map<String, dynamic> j, List<String> keys, {num fallback = 0}) {
+  static num? numberOrNull(Map<String, dynamic> j, List<String> keys) {
     for (final k in keys) {
       final v = j[k];
       if (v is num) return v;
@@ -47,8 +47,11 @@ abstract class JsonUtils {
         if (p != null) return p;
       }
     }
-    return fallback;
+    return null;
   }
+
+  static num number(Map<String, dynamic> j, List<String> keys, {num fallback = 0}) =>
+      numberOrNull(j, keys) ?? fallback;
 
   static int integer(Map<String, dynamic> j, List<String> keys, {int fallback = 0}) =>
       number(j, keys, fallback: fallback).toInt();

@@ -31,9 +31,18 @@ class _MarqueeScreenState extends ConsumerState<MarqueeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 12, 20, 16),
-              child: PremiaLogo(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const PremiaLogo(),
+                  IconButton(
+                    icon: const Icon(Icons.menu, color: Colors.white),
+                    onPressed: () => context.push(RoutePaths.enterLink),
+                  ),
+                ],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -145,6 +154,22 @@ class _NowShowingCard extends ConsumerWidget {
                     ),
                   ),
                 ),
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.25),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white70, width: 1.5),
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
+                ),
                 Positioned(
                   left: 16,
                   right: 16,
@@ -197,14 +222,21 @@ class _NowShowingCard extends ConsumerWidget {
           ),
         ],
         const SizedBox(height: 16),
+        AppButton(
+          label: 'Go to lobby',
+          onPressed: () => context.push(RoutePaths.lobby, extra: film),
+        ),
+        const SizedBox(height: 10),
         if (hasTicket)
           AppButton(
-            label: 'Start Premier',
+            label: 'Start Premiere',
+            style: AppButtonStyle.outline,
             onPressed: () => context.push(RoutePaths.player, extra: film.title),
           )
         else ...[
           AppButton(
             label: 'Get a ticket',
+            style: AppButtonStyle.outline,
             onPressed: () => context.push(RoutePaths.checkout, extra: film),
           ),
           const _HavePassLink(),

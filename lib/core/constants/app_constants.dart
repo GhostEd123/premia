@@ -25,6 +25,10 @@ abstract class AppConstants {
   /// Header carrying the per-install device identifier.
   static const String deviceIdHeader = 'X-Device-Id';
 
+  /// Nigerian statutory Value Added Tax (7.5%).
+  static const double vatPercentage = 7.5;
+  static const double vatMultiplier = 1.075;
+
   /// Cloudflare Stream customer code (the `customer-<code>` subdomain),
   /// supplied with `--dart-define=CLOUDFLARE_CUSTOMER_CODE=<code>`.
   static const String cloudflareCustomerCode = String.fromEnvironment(

@@ -6,7 +6,7 @@ import 'package:uuid/uuid.dart';
 /// playback sessions to a device (anti-piracy / session enforcement).
 class DeviceIdService {
   DeviceIdService([FlutterSecureStorage? storage])
-      : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? const FlutterSecureStorage();
 
   static const String _key = 'premia.device_id';
 

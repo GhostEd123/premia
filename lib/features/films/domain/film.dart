@@ -10,6 +10,8 @@ class Film extends Equatable {
     this.durationMinutes,
     this.thumbnailUrl,
     this.ticketPriceNgn,
+    this.ticketPriceUsd,
+    this.detectedCurrency,
     this.premiereStart,
     this.premiereEnd,
     this.directors = const [],
@@ -26,6 +28,10 @@ class Film extends Equatable {
   final num? durationMinutes;
   final String? thumbnailUrl;
   final num? ticketPriceNgn;
+  final num? ticketPriceUsd;
+
+  /// Currency detected by the backend GeoIP resolution ('NGN' or 'USD').
+  final String? detectedCurrency;
   final DateTime? premiereStart;
 
   /// End of the premiere window ("doors close"); null if not supplied.
@@ -53,6 +59,8 @@ class Film extends Equatable {
         durationMinutes,
         thumbnailUrl,
         ticketPriceNgn,
+        ticketPriceUsd,
+        detectedCurrency,
         premiereStart,
         premiereEnd,
         directors,

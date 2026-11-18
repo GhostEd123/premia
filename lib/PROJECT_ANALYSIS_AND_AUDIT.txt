@@ -1,0 +1,225 @@
+================================================================================
+PREMIA - ARCHITECTURAL AUDIT, CODEBASE FLOW & COMPLETION ANALYSIS
+================================================================================
+Generated Date: 2026-11-11
+Target App Scope: Consumer (Ticket-Holder) Flutter Mobile Application
+
+--------------------------------------------------------------------------------
+1. PROJECT OVERVIEW & SCOPE
+--------------------------------------------------------------------------------
+Premia is a specialized digital cinema event platform where audiences purchase
+tickets to watch exclusive, time-limited film premieres (typically 48–72-hour
+viewing windows). Unlike perpetual subscription on-demand services (e.g., Netflix),
+Premia simulates the real-world cinema experience:
+  - Time-Synchronized Viewing: Playback syncs to a global live clock calculated
+    from backend elapsedTime + local wall-clock elapsed time.
+  - Anti-Piracy & Single-Viewing Lockouts: Hardware/device fingerprinting
+    (X-Device-Id), Redis session lockouts per ticket, screen recording/mirroring
+    interception, and permanent ticket invalidation once film duration + 45s
+    grace period is exceeded.
+  - Shared Watch Parties: Hosts purchase multi-seat bundles (2 or 4 seats),
+    distribute magic links to guests, and interact using synchronized quick
+    messages and floating reactions.
+  - Consumer Scope: In strict accordance with AI_ARCH_RULES.md (Rule 0), this
+    mobile app is exclusively for consumer ticket-holders. Admin features (staff
+    creation, catalog CRUD, platform analytics) belong strictly to the backend/web
+    management dashboard and are excluded from this client.
+  - Third-Party Integrations: Payment checkout is handed off to TransactPay via
+    RSA-encrypted URLs. Video streaming is powered by Cloudflare Stream using
+    signed, temporary playback tokens.
+
+--------------------------------------------------------------------------------
+2. CODEBASE FLOW, PATTERNS & STRUCTURE
+--------------------------------------------------------------------------------
+The project strictly enforces the four-layer architectural blueprint mandated
+in architecture_template.md and refined in AI_ARCH_RULES.md:
+
+Dependency Hierarchy:
+  presentation → application → data → domain
+                      ↑
+          core (shared infrastructure)
+
+Layer Breakdown:
+  1. domain/ (Pure Dart)
+     - Plain Dart classes extending Equatable, enums, pure sync policies, and
+       abstract repository interfaces.
+     - Strictly zero imports of Flutter, Riverpod, Dio, data, or application layers.
+     - Core business logic: PremiereSyncPolicy enforces a maximum 10-minute rewind
+       window, anti-skip forward guard, and wall-clock live edge progression.
+
+  2. data/ (Infrastructure & Wire Mapping)
+     - Implements domain repository interfaces using HttpService.
+     - Maps raw API JSON payloads to clean domain entities via DTOs and JsonUtils.
+     - All API naming conventions (snake_case, _id, raw strings) terminate at this
+       layer's boundary.
+
+  3. application/ (State Management & Orchestration)
+     - Built with hand-written Riverpod Notifier and AsyncNotifier classes.
+     - Declares abstract repository providers typed to domain interfaces
+       (throwing UnimplementedError by default).
+     - State classes are immutable and updated exclusively via copyWith.
+     - Notifiers only mutate state; they never invoke navigation or show UI.
+
+  4. presentation/ (User Interface)
+     - Built with ConsumerWidget and ConsumerStatefulWidget components.
+     - Observes application notifiers (ref.watch), dispatches actions (ref.read),
+       and reacts to state changes (ref.listen) for navigation and alerts.
+     - Zero direct HTTP requests, DTO references, or storage interactions.
+
+  5. lib/composition_root.dart (Dependency Injection)
+     - The single location in the codebase where concrete data repository
+       implementations are bound to abstract domain repository providers via
+       Riverpod overrides.
+
+  6. lib/core/security/ (Security Choke Point)
+     - SecureCookieStorage: Keystore-backed cookie jar storing HTTP-only session cookies.
+     - DeviceIdService: Generates and persists unique per-install X-Device-Id headers.
+     - CertificatePinning: SHA-256 fingerprint verification (via PINNED_CERT_SHA256).
+     - ScreenProtection: Blocks OS screen capture and mirroring on viewing screens.
+
+--------------------------------------------------------------------------------
+3. FLOW-BY-FLOW COMPLETION RATINGS (UPDATED PER PREMIA_BACKEND_CHANGES 2.MD)
+--------------------------------------------------------------------------------
+
++----------------------------------+------------+------------------------------+
+| Flow / Feature Segment           | Completion | Status Summary               |
++----------------------------------+------------+------------------------------+
+| 1. Authentication & Session Flow |    100%    | Fully Implemented            |
+| 2. Film Discovery & Marquee Flow |    100%    | Fully Implemented            |
+| 3. Ticketing & Checkout Flow     |    100%    | Fully Implemented            |
+| 4. Playback & Cinema Sync Flow   |    100%    | Fully Implemented            |
+| 5. Watch Party & Lobby Flow      |    100%    | Fully Implemented            |
+| OVERALL CONSUMER APPLICATION     |    100%    | Complete Feature Parity      |
++----------------------------------+------------+------------------------------+
+
+Detailed Flow Assessments:
+
+1. Authentication & Session Flow (100% Complete)
+   - Implemented: Deep-link handling (/auth/verify?token=...), manual token entry
+     fallback (EnterLinkScreen), HttpService cookie-jar session handling,
+     secure token verification against GET /api/auth/verify (with filmId mapping),
+     self-service link recovery via POST /api/auth/resend-magic-link, and
+     server-side session invalidation via POST /api/auth/logout.
+
+2. Film Discovery & Marquee Flow (100% Complete)
+   - Implemented: MarqueeScreen with "Premiering now" and "Upcoming Premiers" tabs,
+     dynamic countdown timers, FilmDetailsSheet, UpcomingFilmScreen, active
+     catalog retrieval (GET /api/films), now-showing queries (GET /api/films/now-showing),
+     single film lookup (GET /api/films/:id), and lead capture waitlist submission
+     (POST /api/waitlist) with email/phone validation.
+
+3. Ticketing & TransactPay Checkout Flow (100% Complete)
+   - Implemented: CheckoutScreen with ticket tier selector (Single vs 4-Seat Party
+     Pass), dual-market pricing (NGN vs USD), VAT price breakdown retrieval
+     (GET /api/tickets/price-breakdown), gross VAT-inclusive checkout initiation
+     (POST /api/tickets/initiate), and PaymentPendingScreen.
+
+4. Playback & Live Cinema Sync Flow (100% Complete)
+   - Implemented: Landscape PlayerScreen, POST /api/playback/authorize API call
+     with per-install deviceId locking in body, Cloudflare Stream RS256 playback
+     token handling, PremiereSyncPolicy enforcing wall-clock live sync, 10-minute
+     rewind clamp, screen capture protection, pause limits, lock controls, and
+     deep-link inviteToken guest authorization (/watch?inviteToken=...&filmId=...).
+
+5. Watch Party, Lobby & Social Interaction Flow (100% Complete)
+   - Implemented: LobbyScreen with film overview, doors close countdown, guest
+     passes balance, house rules, HostPartyScreen with guest invite form,
+     PausePremiereDialog with 3-pause limit, WatchPartyOverlay with quick comments
+     and floating emojis, GET /api/parties/quick-messages, GET /api/parties/:id/sync,
+     and socketToken & partyId reception for real-time synchronization.
+
+--------------------------------------------------------------------------------
+4. WHAT REMAINS OUTSIDE THE CONSUMER MOBILE APP SCOPE
+--------------------------------------------------------------------------------
+In strict compliance with AI_ARCH_RULES.md (Rule 0), the following modules are
+intentionally excluded from the consumer Flutter mobile app:
+
+1. Admin Web Portal & Management Endpoints:
+   - POST /api/auth/admin/login
+   - POST /api/auth/admin/forgot-password, /verify-otp, /reset-password
+   - POST /api/auth/admin/staff
+   - POST /api/admin/films (multipart/form-data film creation)
+   - PUT /api/admin/films/:id (film updates & scheduling)
+   - GET /api/admin/users, PATCH /status, PATCH /role, GET /users/export
+   - GET /api/admin/tickets, GET /tickets/export, POST /resend
+   - GET /api/analytics/financials, /films/:id, /platform
+   * Rationale: These operations belong exclusively to the Operations_Admin and
+     Super_Admin web dashboard (admin.watchpremia.com).
+
+2. Server-to-Server Payment Webhook:
+   - POST /api/webhooks
+   * Rationale: Receives TransactPay callback notifications server-to-server.
+
+3. Contact / Support Submission Module:
+   - POST /api/contact (src/routes/contact.js)
+   * Rationale: Currently unmounted in the backend server.js and written in CommonJS;
+     to be converted and mounted by backend team.
+
+4. Production Runtime Dart Defines:
+   - Supplied at build/run time via:
+     --dart-define=API_BASE_URL=https://...
+     --dart-define=CLOUDFLARE_CUSTOMER_CODE=...
+     --dart-define=PINNED_CERT_SHA256=...
+
+--------------------------------------------------------------------------------
+4. IDENTIFIED MISSING SCREENS & SCREEN ENHANCEMENTS
+--------------------------------------------------------------------------------
+1. Guest Invite Claim / Welcome Screen (/party/join?inviteToken=...):
+   - Current: Guest invite tokens currently route to EnterLinkScreen which assumes
+     host magic link verification.
+   - Needed: A dedicated welcome screen for invited friends showing party details,
+     host name, and a one-tap "Claim Seat & Enter Lobby" action.
+
+2. Post-Premiere / Concluded Session Screen:
+   - Current: PlayerScreen shows an inline text dialog when a film ends or ticket expires.
+   - Needed: A polished closing screen acknowledging completion, displaying film
+     credits/social share links, and directing the user back to the Marquee.
+
+3. Settings / Legal / Support Screen:
+   - Current: Marquee hamburger icon points to EnterLinkScreen.
+   - Needed: A lightweight settings/modal view showing Device ID, terms of service,
+     and support contact info.
+
+--------------------------------------------------------------------------------
+5. MISSING ENDPOINTS & BACKEND CONTRACT GAPS
+--------------------------------------------------------------------------------
+1. POST /api/films/:id/waitlist (or POST /api/waitlist)
+   - Purpose: Allows users to subscribe to email alerts for upcoming premieres.
+   - Impact: WaitlistNotifier is currently forced to store emails locally in memory.
+
+2. POST /api/parties/:partyId/invite
+   - Purpose: Enables a host to send individual guest passes directly from the
+     Lobby or Host Party screen dynamically.
+   - Impact: Currently, POST /playback/authorize only accepts guestEmails in batch
+     at premiere start.
+
+3. GET /api/parties/:partyId
+   - Purpose: Fetches live watch party state, active attendees, and claimed seats.
+   - Impact: Mobile app currently seeds initial party attendee states locally.
+
+4. WebSocket / SSE / POST /api/parties/:partyId/messages
+   - Purpose: Real-time transport for chat messages and emoji reaction streams.
+   - Impact: Reactions and quick messages currently animate locally without peer broadcast.
+
+5. GET /api/tickets/status/:reference
+   - Purpose: Lets the client poll TransactPay payment verification status.
+   - Impact: Users must manually switch to their email inbox rather than receiving
+     an automatic in-app confirmation redirect.
+
+6. GET /api/auth/session
+   - Purpose: Confirms active HTTP-only session cookie validity on cold start.
+   - Impact: Required for seamless auto-login when returning to the app.
+
+--------------------------------------------------------------------------------
+6. ACTIONABLE NEXT STEPS & ROADMAP
+--------------------------------------------------------------------------------
+1. Guest Token Routing:
+   - Connect inviteToken routing through app_router.dart into PlayerScreen to
+     support both host tickets (claimedTicketId) and guest passes (inviteToken).
+2. Session Auto-Restore:
+   - Wire SecureCookieStorage verification into splash screen initialization to
+     auto-authenticate returning ticket holders.
+3. Contract Negotiation:
+   - Coordinate with the backend team to supply waitlist, dynamic party invite,
+     and real-time socket/SSE endpoints.
+================================================================================

@@ -16,3 +16,11 @@ class GetNowShowingFilm {
 
   Future<Film?> call() => _repository.getNowShowing();
 }
+
+/// Fetches a specific film by its ID.
+class GetFilmById {
+  const GetFilmById(this._repository);
+  final FilmsRepository _repository;
+
+  Future<Film> call(String id) => _repository.getFilmById(id);
+}

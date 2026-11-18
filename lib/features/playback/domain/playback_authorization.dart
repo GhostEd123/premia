@@ -29,6 +29,8 @@ class PlaybackAuthorization extends Equatable {
     required this.streamId,
     required this.ticketType,
     required this.elapsedSeconds,
+    this.partyId,
+    this.socketToken,
   });
 
   /// Signed Cloudflare Stream token.
@@ -39,8 +41,21 @@ class PlaybackAuthorization extends Equatable {
   /// The player MUST seek to this offset so everyone watches in sync.
   final int elapsedSeconds;
 
+  /// Associated watch party room ID if part of a group/bundle premiere.
+  final String? partyId;
+
+  /// Real-time watch party authentication token for Socket.IO connections.
+  final String? socketToken;
+
   Duration get seekPosition => Duration(seconds: elapsedSeconds);
 
   @override
-  List<Object?> get props => [playbackToken, streamId, ticketType, elapsedSeconds];
+  List<Object?> get props => [
+        playbackToken,
+        streamId,
+        ticketType,
+        elapsedSeconds,
+        partyId,
+        socketToken,
+      ];
 }

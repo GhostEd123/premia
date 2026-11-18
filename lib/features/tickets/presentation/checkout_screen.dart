@@ -28,6 +28,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   final TextEditingController _email = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(ticketPurchaseNotifierProvider.notifier).loadPriceBreakdown(
+            filmId: widget.film.id,
+            ticketType: TicketType.single,
+            currency: widget.film.detectedCurrency,
+          );
+    });
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     super.dispose();
@@ -86,19 +98,48 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
                 children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Single ticket', style: TextStyle(fontWeight: FontWeight.w600)),
-                      SizedBox(height: 2),
-                      Text('1 viewer • one premiere', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Single ticket', style: TextStyle(fontWeight: FontWeight.w600)),
+                          SizedBox(height: 2),
+                          Text('1 viewer • one premiere', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                        ],
+                      ),
+                      if (state.breakdown != null)
+                        Text(
+                          state.breakdown!.currency == 'USD'
+                              ? '\$${state.breakdown!.grossAmount.toStringAsFixed(2)}'
+                              : Formatters.naira(state.breakdown!.grossAmount),
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                        )
+                      else if (price != null)
+                        Text(Formatters.naira(price), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                     ],
                   ),
-                  if (price != null)
-                    Text(Formatters.naira(price), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  if (state.breakdown != null) ...[
+                    const Divider(color: AppColors.border, height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Includes 7.5% VAT',
+                          style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                        ),
+                        Text(
+                          state.breakdown!.currency == 'USD'
+                              ? 'VAT: \$${state.breakdown!.vatAmount.toStringAsFixed(2)}'
+                              : 'VAT: ${Formatters.naira(state.breakdown!.vatAmount)}',
+                          style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -128,6 +169,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     filmId: film.id,
                     ticketType: TicketType.single,
                     email: _email.text,
+                    currency: film.detectedCurrency,
                   ),
             ),
           ],

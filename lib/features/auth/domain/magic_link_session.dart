@@ -7,6 +7,7 @@ class MagicLinkSession extends Equatable {
     required this.userId,
     required this.claimedTicketId,
     required this.ticketType,
+    this.filmId,
   });
 
   final String userId;
@@ -15,6 +16,9 @@ class MagicLinkSession extends Equatable {
   /// Raw ticket type string (`single`, `bundle_2`, `bundle_4`).
   final String ticketType;
 
+  /// Film associated with the verified ticket (enables direct routing).
+  final String? filmId;
+
   @override
-  List<Object?> get props => [userId, claimedTicketId, ticketType];
+  List<Object?> get props => [userId, claimedTicketId, ticketType, filmId];
 }

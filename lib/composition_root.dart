@@ -4,7 +4,9 @@ import 'core/network/http_service.dart';
 import 'features/auth/application/auth_notifier.dart';
 import 'features/auth/data/auth_repository_impl.dart';
 import 'features/films/application/films_notifier.dart';
+import 'features/films/application/waitlist_notifier.dart';
 import 'features/films/data/films_repository_impl.dart';
+import 'features/films/data/waitlist_repository_impl.dart';
 import 'features/parties/application/parties_providers.dart';
 import 'features/parties/data/parties_repository_impl.dart';
 import 'features/playback/application/playback_notifier.dart';
@@ -22,6 +24,9 @@ final List<Override> repositoryOverrides = [
   ),
   filmsRepositoryProvider.overrideWith(
     (ref) => FilmsRepositoryImpl(ref.watch(httpServiceProvider)),
+  ),
+  waitlistRepositoryProvider.overrideWith(
+    (ref) => WaitlistRepositoryImpl(ref.watch(httpServiceProvider)),
   ),
   ticketsRepositoryProvider.overrideWith(
     (ref) => TicketsRepositoryImpl(ref.watch(httpServiceProvider)),

@@ -44,6 +44,14 @@ class PaymentPendingScreen extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
               ),
+              if (intent.grossAmount != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Amount: ${intent.currency ?? 'NGN'} ${intent.grossAmount} (inc. 7.5% VAT)',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ],
               const Spacer(),
               AppButton(
                 label: 'I have my ticket link',

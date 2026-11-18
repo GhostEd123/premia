@@ -7,4 +7,7 @@ abstract class FilmsRepository {
 
   /// GET /films/now-showing — null when nothing is premiering.
   Future<Film?> getNowShowing();
+
+  /// GET /films/:id — single film details.
+  Future<Film> getFilmById(String id);
 }

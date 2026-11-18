@@ -12,6 +12,9 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../auth/application/auth_notifier.dart';
+import '../../parties/application/watch_party_notifier.dart';
+import '../../parties/presentation/widgets/pause_premiere_dialog.dart';
+import '../../parties/presentation/widgets/watch_party_overlay.dart';
 import '../application/playback_notifier.dart';
 import '../domain/playback_authorization.dart';
 import '../domain/premiere_sync_policy.dart';
@@ -27,9 +30,10 @@ enum _Phase { authorizing, loading, playing, ended, error }
 /// - the stream only plays via the signed, short-lived playback token.
 /// Pausing is unrestricted: the premiere keeps going live while paused.
 class PlayerScreen extends ConsumerStatefulWidget {
-  const PlayerScreen({required this.title, super.key});
+  const PlayerScreen({required this.title, this.inviteToken, super.key});
 
   final String title;
+  final String? inviteToken;
 
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
@@ -42,6 +46,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   _Phase _phase = _Phase.authorizing;
   String? _errorMessage;
   bool _controlsVisible = true;
+  bool _chatVisible = false;
+  bool _isLocked = false;
 
   @override
   void initState() {
@@ -70,6 +76,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   // --- Authorization & setup ---
 
   Future<void> _authorize() async {
+    final invite = widget.inviteToken;
+    if (invite != null && invite.isNotEmpty) {
+      setState(() => _phase = _Phase.authorizing);
+      await ref.read(playbackNotifierProvider.notifier).authorizeGuest(invite);
+      return;
+    }
     final ticketId = ref.read(authNotifierProvider).magicLinkSession?.claimedTicketId;
     if (ticketId == null || ticketId.isEmpty) {
       _fail('Open your ticket link to start the premiere.');
@@ -149,7 +161,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void _togglePlay() {
     final c = _controller;
     if (c == null) return;
-    c.value.isPlaying ? c.pause() : c.play();
+    if (c.value.isPlaying) {
+      final partyState = ref.read(watchPartyNotifierProvider);
+      PausePremiereDialog.show(
+        context,
+        pausesRemaining: partyState.pausesRemaining,
+        onKeepWatching: () {},
+        onConfirmPause: () {
+          ref.read(watchPartyNotifierProvider.notifier).confirmPause();
+          c.pause();
+        },
+      );
+    } else {
+      ref.read(watchPartyNotifierProvider.notifier).resume();
+      c.play();
+    }
     _scheduleHide();
   }
 
@@ -239,6 +265,45 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Widget _buildPlayer() {
     final controller = _controller!;
     final policy = _policy!;
+    final partyState = ref.watch(watchPartyNotifierProvider);
+
+    if (_isLocked) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _controlsVisible = !_controlsVisible),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: controller.value.aspectRatio == 0
+                    ? 16 / 9
+                    : controller.value.aspectRatio,
+                child: VideoPlayer(controller),
+              ),
+            ),
+            if (_controlsVisible)
+              Positioned(
+                top: 24,
+                right: 24,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    iconSize: 28,
+                    tooltip: 'Unlock Screen',
+                    icon: const Icon(Icons.lock, color: Colors.white),
+                    onPressed: () => setState(() => _isLocked = false),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _toggleControls,
@@ -247,7 +312,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         children: [
           Center(
             child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
+              aspectRatio: controller.value.aspectRatio == 0
+                  ? 16 / 9
+                  : controller.value.aspectRatio,
               child: VideoPlayer(controller),
             ),
           ),
@@ -266,6 +333,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       title: widget.title,
                       value: value,
                       policy: policy,
+                      pausesRemaining: partyState.pausesRemaining,
+                      isLocked: _isLocked,
+                      chatVisible: _chatVisible,
+                      onToggleLock: () =>
+                          setState(() => _isLocked = !_isLocked),
+                      onToggleChat: () =>
+                          setState(() => _chatVisible = !_chatVisible),
                       onClose: _confirmExit,
                       onTogglePlay: _togglePlay,
                       onSeek: _seekTo,
@@ -273,6 +347,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                     ),
                   ),
                 ),
+                if (_chatVisible)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: WatchPartyOverlay(
+                      isExpanded: true,
+                      onToggleExpand: () =>
+                          setState(() => _chatVisible = false),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -289,6 +374,11 @@ class _Controls extends StatefulWidget {
     required this.title,
     required this.value,
     required this.policy,
+    required this.pausesRemaining,
+    required this.isLocked,
+    required this.chatVisible,
+    required this.onToggleLock,
+    required this.onToggleChat,
     required this.onClose,
     required this.onTogglePlay,
     required this.onSeek,
@@ -298,6 +388,11 @@ class _Controls extends StatefulWidget {
   final String title;
   final VideoPlayerValue value;
   final PremiereSyncPolicy policy;
+  final int pausesRemaining;
+  final bool isLocked;
+  final bool chatVisible;
+  final VoidCallback onToggleLock;
+  final VoidCallback onToggleChat;
   final VoidCallback onClose;
   final VoidCallback onTogglePlay;
   final ValueChanged<Duration> onSeek;
@@ -357,6 +452,22 @@ class _ControlsState extends State<_Controls> {
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                   ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Text(
+                      '|| -- ${widget.pausesRemaining} pauses left',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const Spacer(),
@@ -372,14 +483,14 @@ class _ControlsState extends State<_Controls> {
                         ? () => widget.onSeek(position - const Duration(seconds: 10))
                         : null,
                   ),
-                  const SizedBox(width: 48),
+                  const SizedBox(width: 32),
                   IconButton(
                     iconSize: 64,
                     tooltip: value.isPlaying ? 'Pause' : 'Play',
                     icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow),
                     onPressed: widget.onTogglePlay,
                   ),
-                  const SizedBox(width: 48),
+                  const SizedBox(width: 32),
                   IconButton(
                     iconSize: 44,
                     tooltip: 'Forward 10 seconds',
@@ -388,6 +499,13 @@ class _ControlsState extends State<_Controls> {
                     onPressed: canForward
                         ? () => widget.onSeek(position + const Duration(seconds: 10))
                         : null,
+                  ),
+                  const SizedBox(width: 24),
+                  IconButton(
+                    iconSize: 28,
+                    tooltip: 'Lock screen',
+                    icon: const Icon(Icons.lock_open, color: Colors.white70),
+                    onPressed: widget.onToggleLock,
                   ),
                 ],
               ),
@@ -442,6 +560,20 @@ class _ControlsState extends State<_Controls> {
                       onPressed: widget.onJumpToLive,
                       child: const Text('Jump to Live', style: TextStyle(fontSize: 12)),
                     ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.black54,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: const BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                    icon: const Icon(Icons.forum_outlined, size: 16),
+                    label: const Text('React & Chat', style: TextStyle(fontSize: 12)),
+                    onPressed: widget.onToggleChat,
+                  ),
                 ],
               ),
             ],

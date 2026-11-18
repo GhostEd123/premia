@@ -7,6 +7,7 @@ class MagicLinkSessionDto {
     required this.userId,
     required this.claimedTicketId,
     required this.ticketType,
+    this.filmId,
   });
 
   factory MagicLinkSessionDto.fromJson(Map<String, dynamic> json) =>
@@ -14,15 +15,18 @@ class MagicLinkSessionDto {
         userId: JsonUtils.string(json, ['userId', 'user_id']),
         claimedTicketId: JsonUtils.string(json, ['claimedTicketId']),
         ticketType: JsonUtils.string(json, ['ticketType']),
+        filmId: JsonUtils.stringOrNull(json, ['filmId', 'film_id']),
       );
 
   final String userId;
   final String claimedTicketId;
   final String ticketType;
+  final String? filmId;
 
   MagicLinkSession toEntity() => MagicLinkSession(
         userId: userId,
         claimedTicketId: claimedTicketId,
         ticketType: ticketType,
+        filmId: filmId,
       );
 }

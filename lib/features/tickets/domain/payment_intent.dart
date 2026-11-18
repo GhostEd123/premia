@@ -18,12 +18,33 @@ enum TicketType {
 
 /// Checkout details returned when a payment is initiated.
 class PaymentIntent extends Equatable {
-  const PaymentIntent({required this.paymentUrl, required this.reference});
+  const PaymentIntent({
+    required this.paymentUrl,
+    required this.reference,
+    this.currency,
+    this.grossAmount,
+    this.vatAmount,
+  });
 
   /// Hosted checkout page the app must send the user to.
   final String paymentUrl;
   final String reference;
 
+  /// Currency code ('NGN' or 'USD').
+  final String? currency;
+
+  /// Total amount charged including 7.5% VAT.
+  final num? grossAmount;
+
+  /// The 7.5% VAT component.
+  final num? vatAmount;
+
   @override
-  List<Object?> get props => [paymentUrl, reference];
+  List<Object?> get props => [
+        paymentUrl,
+        reference,
+        currency,
+        grossAmount,
+        vatAmount,
+      ];
 }

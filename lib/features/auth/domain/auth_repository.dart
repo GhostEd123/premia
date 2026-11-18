@@ -5,6 +5,12 @@ abstract class AuthRepository {
   /// GET /auth/verify?token=...
   Future<MagicLinkSession> verifyMagicLink(String token);
 
-  /// Clears the local session (cookies).
-  Future<void> clearSession();
+  /// POST /auth/resend-magic-link
+  Future<String> resendMagicLink({
+    required String email,
+    required String filmId,
+  });
+
+  /// POST /auth/logout and clears local session cookies.
+  Future<void> signOut();
 }

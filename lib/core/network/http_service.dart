@@ -4,6 +4,7 @@ import 'package:dio/io.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 
 import '../constants/app_constants.dart';
 import '../security/certificate_pinning.dart';
@@ -20,8 +21,9 @@ import 'api_exception.dart';
 /// - Optional certificate pinning via [CertificatePinning].
 /// - A per-install device id is sent on every request
 ///   ([AppConstants.deviceIdHeader]).
-/// - No request/response logging is registered, so tokens and cookies cannot
-///   leak through logs. Do not add a logger without guarding it with `assert`.
+/// - Endpoint payloads and responses are logged via [PrettyDioLogger] in debug
+///   mode, guarded by `assert` so it is stripped from release builds to prevent
+///   leaks in production.
 class HttpService {
   HttpService({
     Dio? dio,
@@ -53,6 +55,22 @@ class HttpService {
     _dio.interceptors
       ..add(_secureRequestInterceptor())
       ..add(CookieManager(_cookieJar));
+
+    assert(() {
+      _dio.interceptors.add(
+        PrettyDioLogger(
+          request: true,
+          requestHeader: false,
+          requestBody: true,
+          responseHeader: false,
+          responseBody: true,
+          error: true,
+          compact: true,
+          maxWidth: 90,
+        ),
+      );
+      return true;
+    }());
   }
 
   final Dio _dio;

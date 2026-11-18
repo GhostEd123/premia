@@ -53,9 +53,9 @@ class _WaitlistSheetState extends ConsumerState<WaitlistSheet> {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'We’ll notify you about future premieres.',
-              style: TextStyle(color: AppColors.textSecondary),
+            Text(
+              state.successMessage ?? 'We’ll notify you about future premieres.',
+              style: const TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 24),
             AppButton(label: 'Done', onPressed: () => Navigator.of(context).pop()),
@@ -66,24 +66,31 @@ class _WaitlistSheetState extends ConsumerState<WaitlistSheet> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Enter your email address to receive notifications for future premieres',
+              'Enter your email address or phone number to receive notifications for future premieres',
               style: TextStyle(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 20),
-            const Text('Email', style: TextStyle(fontWeight: FontWeight.w600)),
+            const Text('Email or Phone', style: TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
-              autofillHints: const [AutofillHints.email],
               decoration: InputDecoration(
-                hintText: 'xyz@gmail.com',
+                hintText: 'xyz@gmail.com or +234...',
                 errorText: state.emailError,
               ),
             ),
+            if (state.errorMessage != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                state.errorMessage!,
+                style: const TextStyle(color: AppColors.primary, fontSize: 13),
+              ),
+            ],
             const SizedBox(height: 24),
             AppButton(
               label: 'Submit',
+              isLoading: state.isSubmitting,
               onPressed: () =>
                   ref.read(waitlistNotifierProvider.notifier).submit(_email.text),
             ),

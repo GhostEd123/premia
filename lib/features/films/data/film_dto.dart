@@ -26,6 +26,13 @@ class FilmDto {
         ticketPriceNgn: _json['ticketPriceNGN'] == null
             ? null
             : JsonUtils.number(_json, ['ticketPriceNGN']),
+        ticketPriceUsd: _json['ticketPriceUSD'] == null
+            ? null
+            : JsonUtils.number(_json, ['ticketPriceUSD']),
+        detectedCurrency: JsonUtils.stringOrNull(
+          _json,
+          ['detectedCurrency', 'currency'],
+        ),
         premiereStart: JsonUtils.dateTime(_json, ['premiereStart']),
         premiereEnd: JsonUtils.dateTime(_json, ['premiereEnd']),
         directors: _list(_json['directors'] ?? _json['director']),

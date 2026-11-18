@@ -17,5 +17,32 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<void> clearSession() => _http.clearSession();
+  Future<String> resendMagicLink({
+    required String email,
+    required String filmId,
+  }) async {
+    final raw = await _http.post(
+      '/auth/resend-magic-link',
+      body: {
+        'email': email.trim().toLowerCase(),
+        'filmId': filmId,
+      },
+    );
+    return JsonUtils.string(
+      JsonUtils.asMap(raw),
+      ['message'],
+      fallback: 'A fresh access link is on its way to your inbox.',
+    );
+  }
+
+  @override
+  Future<void> signOut() async {
+    try {
+      await _http.post('/auth/logout');
+    } catch (_) {
+      // Local session must be wiped even if network fails or server session expired.
+    } finally {
+      await _http.clearSession();
+    }
+  }
 }

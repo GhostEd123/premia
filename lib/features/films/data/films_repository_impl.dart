@@ -25,4 +25,12 @@ class FilmsRepositoryImpl implements FilmsRepository {
     if (film == null) return null;
     return FilmDto.fromJson(JsonUtils.asMap(film)).toEntity();
   }
+
+  @override
+  Future<Film> getFilmById(String id) async {
+    final raw = await _http.get('/films/${Uri.encodeComponent(id)}');
+    final map = JsonUtils.asMap(raw);
+    final filmData = map['film'] ?? map;
+    return FilmDto.fromJson(JsonUtils.asMap(filmData)).toEntity();
+  }
 }
