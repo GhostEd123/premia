@@ -12,7 +12,13 @@ abstract class AppConstants {
 
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://premia-backend.onrender.com/api',
+    defaultValue: 'https://premia-frontend-prev.onrender.com/api',
+  );
+
+  /// Socket.IO base URL for Watch Party WebSockets.
+  static const String socketBaseUrl = String.fromEnvironment(
+    'SOCKET_BASE_URL',
+    defaultValue: 'https://premia-frontend-prev.onrender.com',
   );
 
   /// Comma-separated lowercase hex SHA-256 fingerprints of the accepted

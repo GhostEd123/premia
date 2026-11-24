@@ -6,10 +6,13 @@ import 'app_colors.dart';
 abstract class AppTheme {
   AppTheme._();
 
+  static const String fontFamily = 'Unageo';
+
   static ThemeData get dark {
     final base = ThemeData(
       brightness: Brightness.dark,
       useMaterial3: true,
+      fontFamily: fontFamily,
       scaffoldBackgroundColor: AppColors.background,
       colorScheme: const ColorScheme.dark(
         primary: AppColors.primary,
@@ -18,8 +21,13 @@ abstract class AppTheme {
       ),
     );
     return base.copyWith(
-      // TODO(theme): declare the brand font family in pubspec and set it here.
       textTheme: base.textTheme.apply(
+        fontFamily: fontFamily,
+        bodyColor: AppColors.textPrimary,
+        displayColor: AppColors.textPrimary,
+      ),
+      primaryTextTheme: base.primaryTextTheme.apply(
+        fontFamily: fontFamily,
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,
       ),

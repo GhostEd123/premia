@@ -2,29 +2,19 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 
-/// "R Premia" wordmark used in headers.
+/// Premia wordmark displayed in headers.
 class PremiaLogo extends StatelessWidget {
-  const PremiaLogo({super.key});
+  const PremiaLogo({this.height = 28, super.key});
+
+  final double height;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'R',
-          style: TextStyle(
-            color: AppColors.primary,
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        SizedBox(width: 4),
-        Text(
-          'Premia',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-        ),
-      ],
+    return Image.asset(
+      'assets/icons/Premia_wordmark.png',
+      height: height,
+      fit: BoxFit.contain,
+      semanticLabel: 'Premia',
     );
   }
 }

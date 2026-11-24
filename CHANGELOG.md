@@ -9,6 +9,67 @@ All notable changes to the Premia project will be documented in this file.
 
 ---
 
+## [24/11/26] - 2026-11-24
+
+### 1. Register `Unageo` Brand Font Family & Set as Global App Typography
+- **What Was Added / Modified:**
+  - Updated `pubspec.yaml` to declare the `Unageo` font family with all 14 font variants in `assets/fonts/` (weights `300` Light through `900` Black, regular and `italic`).
+  - Updated `AppTheme` in `lib/core/theme/app_theme.dart` to define `AppTheme.fontFamily = 'Unageo'` and apply it globally on `ThemeData`, `textTheme`, and `primaryTextTheme`.
+- **Explanation:**
+  - Resolves the `TODO(theme)` in `AppTheme` by registering the local `Unageo` font assets and configuring `Unageo` as the central typeface across the entire application.
+- **General Project Impact:**
+  - Every screen, dialog, bottom sheet, button, and input field across the app now automatically inherits the `Unageo` brand typography across all font weights (`w300`–`w900`) and styles.
+
+---
+
+### 2. Replace Text-Based `PremiaLogo` with Brand Wordmark Asset
+- **What Was Added / Modified:**
+  - Updated `PremiaLogo` in `lib/core/widgets/common_widgets.dart` to render `Image.asset('assets/icons/Premia_wordmark.png')` (with configurable `height = 28` and `semanticLabel: 'Premia'`) instead of the placeholder `Row` of `'R'` and `'Premia'` `Text` widgets.
+- **Explanation:**
+  - Displays the official Premia brand wordmark image (`assets/icons/Premia_wordmark.png`) in app headers rather than styled text.
+- **General Project Impact:**
+  - Ensures consistent visual branding on the Marquee header and any screen using `PremiaLogo`.
+
+---
+
+## [22/11/26] - 2026-11-22
+
+### Configure Render Backend API & Socket.IO Base URLs (`AppConstants`)
+- **What Was Added / Modified:**
+  - Updated `lib/core/constants/app_constants.dart`:
+    - Set `AppConstants.apiBaseUrl` default value to `'https://premia-frontend-prev.onrender.com/api'`.
+    - Added `AppConstants.socketBaseUrl` (`--dart-define=SOCKET_BASE_URL`, default value `'https://premia-frontend-prev.onrender.com'`) for Watch Party WebSockets.
+- **Explanation:**
+  - Aligns the app's default network configuration with the active Render backend deployment (`premia-frontend-prev.onrender.com`) for both REST API calls (`/api`) and Socket.IO connections.
+- **General Project Impact:**
+  - Directs all `HttpService` requests and watch party WebSocket connections to the live Render backend instance without requiring manual `--dart-define` overrides during development.
+
+---
+
+## [20/11/26] - 2026-11-20
+
+### Restore Backend API Base URL (`AppConstants.apiBaseUrl`)
+- **What Was Added / Modified:**
+  - Updated `lib/core/constants/app_constants.dart` to restore the default `apiBaseUrl` from `'https://premia-frontend-prev.vercel.app/api'` back to `'https://premia-backend.onrender.com/api'`.
+- **Explanation:**
+  - `premia-frontend-prev.vercel.app` is the Next.js web frontend deployment on Vercel, which does not host the `/api/films/*` backend routes and therefore returned Next.js HTML 404 pages on API calls. The Node.js/Express backend API is hosted at `https://premia-backend.onrender.com/api`.
+- **General Project Impact:**
+  - Restores JSON API communication across all repository endpoints (`/films`, `/films/now-showing`, `/auth/*`, `/tickets/*`, `/playback/*`, `/parties/*`, `/waitlist`).
+
+---
+
+## [18/11/26] - 2026-11-18
+
+### Android Debug Manifest Merger Fix (`android:usesCleartextTraffic`)
+- **What Was Added / Modified:**
+  - Updated `android/app/src/debug/AndroidManifest.xml` to declare `xmlns:tools="http://schemas.android.com/tools"` on the `<manifest>` root and `tools:replace="android:usesCleartextTraffic"` on the `<application>` element.
+- **Explanation:**
+  - `android/app/src/main/AndroidManifest.xml` sets `android:usesCleartextTraffic="false"` to enforce HTTPS-only traffic in release and profile builds (Rule 10 of `AI_ARCH_RULES.md`), whereas `android/app/src/debug/AndroidManifest.xml` overrides it to `true` so debug builds can reach a local backend (`http://10.0.2.2:3000`). Without `tools:replace`, Gradle's `:app:processDebugMainManifest` task fails with a manifest merger conflict.
+- **General Project Impact:**
+  - Unblocks Android debug builds (`assembleDebug` / `flutter run`) while preserving strict `usesCleartextTraffic="false"` security enforcement in profile and release builds.
+
+---
+
 ## [11/11/26] - 2026-11-11
 
 ### 1. Full Consumer Parity Implementation per PREMIA_BACKEND_CHANGES 2.md (100% Completion)
