@@ -13,15 +13,23 @@ import '../application/watch_party_notifier.dart';
 
 /// The Lobby screen where ticket-holders wait, manage watch-party passes,
 /// view house rules, and start the premiere when doors open.
-class LobbyScreen extends ConsumerWidget {
+class LobbyScreen extends ConsumerStatefulWidget {
   const LobbyScreen({this.film, super.key});
 
   final Film? film;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LobbyScreen> createState() => _LobbyScreenState();
+}
+
+class _LobbyScreenState extends ConsumerState<LobbyScreen> {
+  bool _addedToCalendar = false;
+
+  @override
+  Widget build(BuildContext context) {
     // If film not passed via extra, watch nowShowingFilmProvider
-    final activeFilm = film ?? ref.watch(nowShowingFilmProvider).asData?.value;
+    final activeFilm =
+        widget.film ?? ref.watch(nowShowingFilmProvider).asData?.value;
 
     if (activeFilm == null) {
       return Scaffold(
@@ -123,28 +131,39 @@ class LobbyScreen extends ConsumerWidget {
                       ),
                   ],
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 // --- Countdown OR Doors Close Action ---
                 if (isUpcoming && start != null) ...[
                   CountdownBuilder(
                     target: start,
-                    builder: (_, remaining) => _CountdownCard(remaining: remaining),
+                    builder: (_, remaining) =>
+                        _CountdownCard(remaining: remaining),
                   ),
                   const SizedBox(height: 14),
                   AppButton(
-                    label: 'Add to Calendar',
+                    label: _addedToCalendar
+                        ? 'Added to Calendar'
+                        : 'Add to Calendar',
                     style: AppButtonStyle.outline,
-                    icon: Icons.calendar_today_outlined,
+                    icon: _addedToCalendar
+                        ? Icons.check
+                        : Icons.calendar_today_outlined,
                     onPressed: () {
+                      setState(() => _addedToCalendar = !_addedToCalendar);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Added to calendar!'),
-                          duration: Duration(seconds: 2),
+                        SnackBar(
+                          content: Text(
+                            _addedToCalendar
+                                ? 'Added to calendar!'
+                                : 'Removed from calendar',
+                          ),
+                          duration: const Duration(seconds: 2),
                         ),
                       );
                     },
                   ),
                 ] else ...[
+                  const Divider(color: AppColors.border, height: 20),
                   if (end != null)
                     CountdownBuilder(
                       target: end,
@@ -313,7 +332,14 @@ class _GuestPassesCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        gradient: RadialGradient(
+          center: const Alignment(-0.8, -0.6),
+          radius: 1.4,
+          colors: [
+            AppColors.primary.withValues(alpha: 0.28),
+            AppColors.surface,
+          ],
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
       ),
@@ -410,9 +436,9 @@ class _HouseRulesCard extends StatelessWidget {
           ),
           SizedBox(height: 14),
           _RuleItem(text: 'Watch live. No skipping ahead of the premiere'),
-          SizedBox(height: 12),
+          Divider(color: AppColors.border, height: 24),
           _RuleItem(text: 'Rewind up to 10 minutes behind where you are'),
-          SizedBox(height: 12),
+          Divider(color: AppColors.border, height: 24),
           _RuleItem(text: 'Three pauses per premiere. Use them wisely'),
         ],
       ),

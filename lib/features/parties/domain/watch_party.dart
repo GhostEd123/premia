@@ -21,8 +21,9 @@ class WatchParty extends Equatable {
   final List<PartyGuest> guests;
   final List<PartyMessage> messages;
 
-  int get usedPasses => guests.length;
-  bool get hasPassesRemaining => usedPasses < totalPasses;
+  int get usedPasses =>
+      guests.where((g) => g.status == PartyGuestStatus.inLobby).length;
+  bool get hasPassesRemaining => guests.length < totalPasses;
 
   WatchParty copyWith({
     String? partyId,

@@ -145,21 +145,9 @@ class _HostPartyScreenState extends ConsumerState<HostPartyScreen> {
                     color: Colors.white,
                   ),
                 ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceHigh,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${party.usedPasses}/${party.totalPasses}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
+                _GuestPassRing(
+                  used: party.usedPasses,
+                  total: party.totalPasses,
                 ),
               ],
             ),
@@ -173,9 +161,77 @@ class _HostPartyScreenState extends ConsumerState<HostPartyScreen> {
                 ),
               )
             else
-              ...party.guests.map((g) => _GuestCard(guest: g)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: [
+                    for (int i = 0; i < party.guests.length; i++) ...[
+                      if (i > 0)
+                        const Divider(color: AppColors.border, height: 1),
+                      _GuestCard(guest: party.guests[i]),
+                    ],
+                  ],
+                ),
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _GuestPassRing extends StatelessWidget {
+  const _GuestPassRing({required this.used, required this.total});
+
+  final int used;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 3.2,
+              backgroundColor: Colors.white,
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                AppColors.primary,
+              ),
+            ),
+          ),
+          RichText(
+            text: TextSpan(
+              text: '$used',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+              children: [
+                TextSpan(
+                  text: '/$total',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -190,14 +246,8 @@ class _GuestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isInLobby = guest.status == PartyGuestStatus.inLobby;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppDimens.radiusControl),
-        border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
       child: Row(
         children: [
           Expanded(
@@ -227,14 +277,14 @@ class _GuestCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
               color: isInLobby
-                  ? const Color(0xFF332A00)
-                  : AppColors.surfaceHigh,
+                  ? const Color(0xFF4A3700)
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: isInLobby
-                    ? const Color(0xFFF59E0B)
+                    ? const Color(0xFF4A3700)
                     : AppColors.border,
-                width: 0.8,
+                width: 0.9,
               ),
             ),
             child: Row(
@@ -246,8 +296,8 @@ class _GuestCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: isInLobby
-                        ? const Color(0xFFF59E0B)
-                        : AppColors.textMuted,
+                        ? const Color(0xFFF5B800)
+                        : Colors.white70,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -257,7 +307,7 @@ class _GuestCard extends StatelessWidget {
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: isInLobby
-                        ? const Color(0xFFF59E0B)
+                        ? const Color(0xFFF5B800)
                         : AppColors.textSecondary,
                   ),
                 ),

@@ -39,13 +39,13 @@ class _MarqueeScreenState extends ConsumerState<MarqueeScreen> {
                   const PremiaLogo(),
                   IconButton(
                     icon: const Icon(Icons.menu, color: Colors.white),
-                    onPressed: () => context.push(RoutePaths.enterLink),
+                    onPressed: () => context.push(RoutePaths.settings),
                   ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
               child: Row(
                 children: [
                   _TabPill(
@@ -64,7 +64,9 @@ class _MarqueeScreenState extends ConsumerState<MarqueeScreen> {
             ),
             const SizedBox(height: 16),
             Expanded(
-              child: _showUpcoming ? const _UpcomingList() : const _NowShowing(),
+              child: _showUpcoming
+                  ? const _UpcomingList()
+                  : const _NowShowing(),
             ),
           ],
         ),
@@ -74,7 +76,11 @@ class _MarqueeScreenState extends ConsumerState<MarqueeScreen> {
 }
 
 class _TabPill extends StatelessWidget {
-  const _TabPill({required this.label, required this.selected, required this.onTap});
+  const _TabPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   final String label;
   final bool selected;
@@ -113,12 +119,15 @@ class _NowShowing extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final film = ref.watch(nowShowingFilmProvider);
     return film.when(
-      loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+      loading: () => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
       error: (e, _) => _ErrorRetry(
         message: e.toString(),
         onRetry: () => ref.invalidate(nowShowingFilmProvider),
       ),
-      data: (f) => f == null ? const NoActivePremiere() : _NowShowingCard(film: f),
+      data: (f) =>
+          f == null ? const NoActivePremiere() : _NowShowingCard(film: f),
     );
   }
 }
@@ -130,118 +139,352 @@ class _NowShowingCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final hasTicket = ref.watch(authNotifierProvider).isAuthenticated;
+    final auth = ref.watch(authNotifierProvider);
+    final hasTicket = auth.isAuthenticated;
+    final isWatchParty = auth.magicLinkSession?.isWatchParty ?? false;
+    final start = film.premiereStart;
     final end = film.premiereEnd;
+    final countdownTarget = film.isUpcoming
+        ? start
+        : (end ??
+              DateTime.now().add(
+                const Duration(hours: 48, minutes: 36, seconds: 9),
+              ));
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppDimens.radiusCard),
-          child: AspectRatio(
-            aspectRatio: 0.78,
-            child: Stack(
-              fit: StackFit.expand,
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(
+        top: Radius.circular(AppDimens.radiusCard),
+      ),
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          GestureDetector(
+            onTap: () =>
+                FilmDetailsSheet.show(context, film, autoPlayTrailer: true),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppDimens.radiusCard),
+              child: AspectRatio(
+                aspectRatio: 0.78,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    PosterImage(url: film.thumbnailUrl),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: [0.45, 1],
+                          colors: [Colors.transparent, Colors.black],
+                        ),
+                      ),
+                    ),
+                    Center(
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white70, width: 1.5),
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 34,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 20,
+                      right: 20,
+                      bottom: 12,
+                      child: Text(
+                        film.title,
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                PosterImage(url: film.thumbnailUrl),
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: [0.45, 1],
-                      colors: [Colors.transparent, Colors.black],
+                if ((film.description ?? '').isNotEmpty)
+                  Text(
+                    film.description!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.4,
                     ),
                   ),
-                ),
-                Center(
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.25),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white70, width: 1.5),
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow,
-                      color: Colors.white,
-                      size: 32,
-                    ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () => FilmDetailsSheet.show(
+                    context,
+                    film,
+                    autoPlayTrailer: true,
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'View details',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                    ],
                   ),
                 ),
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: Text(
-                    film.title,
-                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, height: 1.1),
+                const SizedBox(height: 14),
+                _MetaRow(film: film),
+                if (hasTicket) ...[
+                  if (film.isUpcoming && start != null) ...[
+                    const SizedBox(height: 14),
+                    _MarqueeCountdownBox(target: start),
+                  ] else ...[
+                    const Divider(color: AppColors.border, height: 24),
+                    if (end != null)
+                      CountdownBuilder(
+                        target: end,
+                        builder: (_, remaining) => Row(
+                          children: [
+                            const Icon(
+                              Icons.fiber_manual_record,
+                              size: 12,
+                              color: AppColors.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Doors close in ${Formatters.hoursMinutes(remaining)}',
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      const Row(
+                        children: [
+                          Icon(
+                            Icons.fiber_manual_record,
+                            size: 12,
+                            color: AppColors.primary,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Doors close in 41h 12m',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    const Divider(color: AppColors.border, height: 24),
+                  ],
+                  const SizedBox(height: 16),
+                  if (isWatchParty)
+                    AppButton(
+                      label: 'Go to Lobby',
+                      onPressed: () =>
+                          context.push(RoutePaths.lobby, extra: film),
+                    )
+                  else
+                    AppButton(
+                      label: 'Start Premier',
+                      onPressed: () =>
+                          context.push(RoutePaths.player, extra: film.title),
+                    ),
+                ] else ...[
+                  if (countdownTarget != null) ...[
+                    const SizedBox(height: 14),
+                    _MarqueeCountdownBox(target: countdownTarget),
+                  ],
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AppButton(
+                          label: 'Get a Ticket',
+                          onPressed: () =>
+                              context.push(RoutePaths.checkout, extra: film),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      _CalendarIconButton(filmTitle: film.title),
+                    ],
                   ),
-                ),
+                  const _HavePassLink(),
+                ],
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        if ((film.description ?? '').isNotEmpty)
-          Text(
-            film.description!,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.textSecondary, height: 1.4),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarqueeCountdownBox extends StatelessWidget {
+  const _MarqueeCountdownBox({required this.target});
+
+  final DateTime target;
+
+  @override
+  Widget build(BuildContext context) {
+    return CountdownBuilder(
+      target: target,
+      builder: (_, remaining) {
+        String two(int n) => n.toString().padLeft(2, '0');
+        final hours = two(remaining.inHours);
+        final mins = two(remaining.inMinutes % 60);
+        final secs = two(remaining.inSeconds % 60);
+
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
           ),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: () => FilmDetailsSheet.show(context, film),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            // crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text('View details', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600)),
-              SizedBox(width: 4),
-              Icon(Icons.arrow_forward, size: 16, color: AppColors.primary),
+              _CountdownUnit(value: hours, label: 'Hrs'),
+              SizedBox(width: 24),
+              const _CountdownColon(),
+              SizedBox(width: 24),
+              _CountdownUnit(value: mins, label: 'Mins'),
+              SizedBox(width: 24),
+              const _CountdownColon(),
+              SizedBox(width: 24),
+              _CountdownUnit(value: secs, label: 'Secs'),
             ],
           ),
-        ),
-        const SizedBox(height: 14),
-        _MetaRow(film: film),
-        if (end != null) ...[
-          const Divider(color: AppColors.border, height: 24),
-          CountdownBuilder(
-            target: end,
-            builder: (_, remaining) => Row(
-              children: [
-                const Icon(Icons.fiber_manual_record, size: 12, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Doors close in ${Formatters.hoursMinutes(remaining)}',
-                  style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
-                ),
-              ],
-            ),
+        );
+      },
+    );
+  }
+}
+
+class _CountdownUnit extends StatelessWidget {
+  const _CountdownUnit({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 32,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            fontFeatures: [FontFeature.tabularFigures()],
           ),
-        ],
-        const SizedBox(height: 16),
-        AppButton(
-          label: 'Go to lobby',
-          onPressed: () => context.push(RoutePaths.lobby, extra: film),
         ),
-        const SizedBox(height: 10),
-        if (hasTicket)
-          AppButton(
-            label: 'Start Premiere',
-            style: AppButtonStyle.outline,
-            onPressed: () => context.push(RoutePaths.player, extra: film.title),
-          )
-        else ...[
-          AppButton(
-            label: 'Get a ticket',
-            style: AppButtonStyle.outline,
-            onPressed: () => context.push(RoutePaths.checkout, extra: film),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+            color: AppColors.textMuted,
           ),
-          const _HavePassLink(),
-        ],
+        ),
       ],
+    );
+  }
+}
+
+class _CountdownColon extends StatelessWidget {
+  const _CountdownColon();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 14),
+      child: Text(
+        ':',
+        style: TextStyle(
+          fontSize: 32,
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarIconButton extends StatefulWidget {
+  const _CalendarIconButton({required this.filmTitle});
+
+  final String filmTitle;
+
+  @override
+  State<_CalendarIconButton> createState() => _CalendarIconButtonState();
+}
+
+class _CalendarIconButtonState extends State<_CalendarIconButton> {
+  bool _added = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: AppDimens.controlHeight,
+      height: AppDimens.controlHeight,
+      child: OutlinedButton(
+        onPressed: () {
+          setState(() => _added = !_added);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.surfaceHigh,
+              content: Text(
+                _added
+                    ? '${widget.filmTitle} added to calendar!'
+                    : 'Removed from calendar',
+              ),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        },
+        style: OutlinedButton.styleFrom(
+          padding: EdgeInsets.zero,
+          foregroundColor: Colors.white,
+          side: BorderSide(color: _added ? Colors.white : AppColors.border),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimens.radiusControl),
+          ),
+        ),
+        child: Icon(
+          _added ? Icons.check : Icons.calendar_today_outlined,
+          size: 20,
+          color: Colors.white,
+        ),
+      ),
     );
   }
 }
@@ -259,7 +502,10 @@ class _MetaRow extends StatelessWidget {
       children: [
         Text(film.genre ?? '', style: style),
         if (film.durationMinutes != null)
-          Text('Duration: ${Formatters.runtime(film.durationMinutes!)}', style: style),
+          Text(
+            'Duration: ${Formatters.runtime(film.durationMinutes!)}',
+            style: style,
+          ),
       ],
     );
   }
@@ -275,7 +521,10 @@ class _HavePassLink extends StatelessWidget {
       child: Center(
         child: Text.rich(
           TextSpan(
-            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+            ),
             children: [
               const TextSpan(text: 'Already have a pass? Open the '),
               WidgetSpan(
@@ -304,7 +553,12 @@ class _HavePassLink extends StatelessWidget {
 
 /// Empty state with the waitlist call to action.
 class NoActivePremiere extends StatelessWidget {
-  const NoActivePremiere({super.key});
+  const NoActivePremiere({
+    this.title = 'No active premiere',
+    super.key,
+  });
+
+  final String title;
 
   @override
   Widget build(BuildContext context) {
@@ -322,9 +576,16 @@ class NoActivePremiere extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.theaters_outlined, size: 96, color: Colors.white.withValues(alpha: 0.25)),
+          Icon(
+            Icons.theaters_outlined,
+            size: 96,
+            color: Colors.white.withValues(alpha: 0.25),
+          ),
           const SizedBox(height: 24),
-          const Text('No active premiere', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 8),
           const Text(
             'Join the VIP / Waitlist to be notified about upcoming premieres.',
@@ -353,7 +614,9 @@ class _UpcomingList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final films = ref.watch(filmsNotifierProvider);
     return films.when(
-      loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+      loading: () => const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
       error: (e, _) => _ErrorRetry(
         message: e.toString(),
         onRetry: () => ref.invalidate(filmsNotifierProvider),
@@ -361,21 +624,33 @@ class _UpcomingList extends ConsumerWidget {
       data: (all) {
         final upcoming = all.where((f) => f.isUpcoming).toList()
           ..sort((a, b) => a.premiereStart!.compareTo(b.premiereStart!));
-        if (upcoming.isEmpty) return const NoActivePremiere();
+        if (upcoming.isEmpty) {
+          return const NoActivePremiere(title: 'No upcoming premiere');
+        }
         return ListView.separated(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
           itemCount: upcoming.length + 1,
-          separatorBuilder: (_, _) => const Divider(color: AppColors.border, height: 24),
+          separatorBuilder: (_, _) =>
+              const Divider(color: AppColors.border, height: 24),
           itemBuilder: (context, i) {
             if (i == 0) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Coming to the Marquee', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                  const Text(
+                    'Coming to the Marquee',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     '${upcoming.length} ${upcoming.length == 1 ? 'Premier' : 'Premiers'}',
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               );
@@ -401,7 +676,11 @@ class _UpcomingRow extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: SizedBox(width: 56, height: 72, child: PosterImage(url: film.thumbnailUrl)),
+            child: SizedBox(
+              width: 56,
+              height: 72,
+              child: PosterImage(url: film.thumbnailUrl),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -411,13 +690,25 @@ class _UpcomingRow extends StatelessWidget {
                 if (film.premiereStart != null)
                   Text(
                     Formatters.premiereDate(film.premiereStart!),
-                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                Text(film.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                Text(
+                  film.title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 if (film.durationMinutes != null)
                   Text(
                     Formatters.runtime(film.durationMinutes!),
-                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
                   ),
               ],
             ),
@@ -443,9 +734,16 @@ class _ErrorRetry extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
             const SizedBox(height: 16),
-            SizedBox(width: 160, child: AppButton(label: 'Try again', onPressed: onRetry)),
+            SizedBox(
+              width: 160,
+              child: AppButton(label: 'Try again', onPressed: onRetry),
+            ),
           ],
         ),
       ),

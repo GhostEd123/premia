@@ -9,6 +9,7 @@ class Film extends Equatable {
     this.description,
     this.durationMinutes,
     this.thumbnailUrl,
+    this.trailerUrl,
     this.ticketPriceNgn,
     this.ticketPriceUsd,
     this.detectedCurrency,
@@ -27,6 +28,7 @@ class Film extends Equatable {
   /// Film runtime in minutes, as supplied by the backend (`duration`).
   final num? durationMinutes;
   final String? thumbnailUrl;
+  final String? trailerUrl;
   final num? ticketPriceNgn;
   final num? ticketPriceUsd;
 
@@ -58,6 +60,7 @@ class Film extends Equatable {
         description,
         durationMinutes,
         thumbnailUrl,
+        trailerUrl,
         ticketPriceNgn,
         ticketPriceUsd,
         detectedCurrency,

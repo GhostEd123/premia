@@ -29,11 +29,13 @@ class PlaybackAuthorization extends Equatable {
     required this.streamId,
     required this.ticketType,
     required this.elapsedSeconds,
+    this.drmToken,
+    this.thumbnailToken,
     this.partyId,
     this.socketToken,
   });
 
-  /// Signed Cloudflare Stream token.
+  /// Signed video playback token (Mux / Cloudflare Stream RS256 JWT).
   final String playbackToken;
   final String streamId;
   final String ticketType;
@@ -41,11 +43,20 @@ class PlaybackAuthorization extends Equatable {
   /// The player MUST seek to this offset so everyone watches in sync.
   final int elapsedSeconds;
 
+  /// Optional signed DRM token (`aud: "d"`).
+  final String? drmToken;
+
+  /// Optional signed thumbnail token (`aud: "t"`).
+  final String? thumbnailToken;
+
   /// Associated watch party room ID if part of a group/bundle premiere.
   final String? partyId;
 
   /// Real-time watch party authentication token for Socket.IO connections.
   final String? socketToken;
+
+  /// True when the playback session belongs to a Watch Party (not a `'single'` ticket).
+  bool get isWatchParty => ticketType != 'single' && ticketType.isNotEmpty;
 
   Duration get seekPosition => Duration(seconds: elapsedSeconds);
 
@@ -55,6 +66,8 @@ class PlaybackAuthorization extends Equatable {
         streamId,
         ticketType,
         elapsedSeconds,
+        drmToken,
+        thumbnailToken,
         partyId,
         socketToken,
       ];

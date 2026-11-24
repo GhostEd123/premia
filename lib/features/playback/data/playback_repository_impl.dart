@@ -12,6 +12,8 @@ class PlaybackAuthorizationDto {
     required this.streamId,
     required this.ticketType,
     required this.elapsedTime,
+    this.drmToken,
+    this.thumbnailToken,
     this.partyId,
     this.socketToken,
   });
@@ -22,6 +24,8 @@ class PlaybackAuthorizationDto {
         streamId: JsonUtils.string(json, ['streamId']),
         ticketType: JsonUtils.string(json, ['ticketType']),
         elapsedTime: JsonUtils.integer(json, ['elapsedTime']),
+        drmToken: JsonUtils.stringOrNull(json, ['drmToken']),
+        thumbnailToken: JsonUtils.stringOrNull(json, ['thumbnailToken']),
         partyId: JsonUtils.stringOrNull(json, ['partyId']),
         socketToken: JsonUtils.stringOrNull(json, ['socketToken']),
       );
@@ -30,6 +34,8 @@ class PlaybackAuthorizationDto {
   final String streamId;
   final String ticketType;
   final int elapsedTime;
+  final String? drmToken;
+  final String? thumbnailToken;
   final String? partyId;
   final String? socketToken;
 
@@ -38,6 +44,8 @@ class PlaybackAuthorizationDto {
         streamId: streamId,
         ticketType: ticketType,
         elapsedSeconds: elapsedTime,
+        drmToken: drmToken,
+        thumbnailToken: thumbnailToken,
         partyId: partyId,
         socketToken: socketToken,
       );

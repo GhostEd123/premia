@@ -82,48 +82,102 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       await ref.read(playbackNotifierProvider.notifier).authorizeGuest(invite);
       return;
     }
-    final ticketId = ref.read(authNotifierProvider).magicLinkSession?.claimedTicketId;
+    final ticketId = ref
+        .read(authNotifierProvider)
+        .magicLinkSession
+        ?.claimedTicketId;
     if (ticketId == null || ticketId.isEmpty) {
       _fail('Open your ticket link to start the premiere.');
       return;
     }
     setState(() => _phase = _Phase.authorizing);
-    await ref.read(playbackNotifierProvider.notifier).authorizeHost(ticketId: ticketId);
+    await ref
+        .read(playbackNotifierProvider.notifier)
+        .authorizeHost(ticketId: ticketId);
   }
 
   Future<void> _startPlayback(PlaybackAuthorization auth) async {
-    if (AppConstants.cloudflareCustomerCode.isEmpty) {
-      _fail('Streaming is not configured (missing CLOUDFLARE_CUSTOMER_CODE).');
+    _controller
+      ?..removeListener(_onTick)
+      ..dispose();
+    _controller = null;
+
+    if (auth.streamId.trim().isEmpty || auth.playbackToken.trim().isEmpty) {
+      _fail('Missing Mux streamId or playbackToken from /playback/authorize.');
       return;
     }
+
     setState(() => _phase = _Phase.loading);
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(AppConstants.streamManifestUrl(auth.playbackToken)),
+    final manifestUrl = AppConstants.streamManifestUrl(
+      auth.playbackToken,
+      streamId: auth.streamId,
     );
+    debugPrint(
+      '[MovieStream] Streaming movie from Mux: '
+      '${AppConstants.streamBaseUrl}/${auth.streamId.trim()}.m3u8?token=<signed> '
+      '(elapsedTime: ${auth.elapsedSeconds}s, partyId: ${auth.partyId})',
+    );
+
+    if (auth.isWatchParty &&
+        (auth.partyId?.isNotEmpty ?? false) &&
+        (auth.socketToken?.isNotEmpty ?? false)) {
+      unawaited(
+        ref.read(watchPartyNotifierProvider.notifier).connectSocket(
+              partyId: auth.partyId!,
+              socketToken: auth.socketToken!,
+            ),
+      );
+    }
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(manifestUrl));
     _controller = controller;
     try {
       await controller.initialize();
+      final videoDuration = controller.value.duration;
+      // If the backend's elapsedTime exceeds the actual duration of the video
+      // asset uploaded to Mux (e.g. a short test clip uploaded for a 95-min
+      // film entry), clamp/wrap the seek position so the stream plays instead
+      // of immediately terminating as ended.
+      final effectiveElapsed =
+          (videoDuration > Duration.zero && auth.seekPosition >= videoDuration)
+              ? Duration(
+                  seconds: videoDuration.inSeconds > 0
+                      ? auth.elapsedSeconds % videoDuration.inSeconds
+                      : 0,
+                )
+              : auth.seekPosition;
+
       final policy = PremiereSyncPolicy(
-        elapsedAtAuthorization: auth.seekPosition,
-        duration: controller.value.duration,
+        elapsedAtAuthorization: effectiveElapsed,
+        duration: videoDuration,
       );
       _policy = policy;
-      if (policy.hasFinished(auth.seekPosition)) {
-        if (mounted) setState(() => _phase = _Phase.ended);
-        return;
+      if (effectiveElapsed > Duration.zero) {
+        await controller.seekTo(policy.clamp(effectiveElapsed));
       }
-      await controller.seekTo(policy.clamp(auth.seekPosition));
       controller.addListener(_onTick);
       await controller.play();
       if (!mounted) return;
       setState(() => _phase = _Phase.playing);
       _scheduleHide();
-    } catch (_) {
-      _fail('We couldn’t load the premiere. Please try again.');
+    } catch (e, st) {
+      final desc = controller.value.errorDescription;
+      debugPrint(
+        '[MovieStreamError] Failed to initialize Mux premiere stream '
+        '(url: ${AppConstants.streamBaseUrl}/${auth.streamId}.m3u8, '
+        'hasDrmToken: ${auth.drmToken != null}): $e'
+        '${desc != null ? ' | controllerError: $desc' : ''}\n$st',
+      );
+      _fail(
+        desc != null && desc.isNotEmpty
+            ? 'We couldn’t load the premiere: $desc'
+            : 'We couldn’t load the premiere ($e)',
+      );
     }
   }
 
   void _fail(String message) {
+    debugPrint('[MovieStreamError] Player entered error state: $message');
     if (!mounted) return;
     setState(() {
       _phase = _Phase.error;
@@ -136,7 +190,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void _onTick() {
     final c = _controller;
     final policy = _policy;
-    if (c == null || policy == null || _phase != _Phase.playing) return;
+    if (c == null) return;
+    if (c.value.hasError && _phase != _Phase.error) {
+      final desc = c.value.errorDescription ?? 'Unknown stream playback error';
+      debugPrint('[MovieStreamError] Asynchronous VideoPlayer error: $desc');
+      _fail('We couldn’t play the premiere: $desc');
+      return;
+    }
+    if (policy == null || _phase != _Phase.playing) return;
     final position = c.value.position;
 
     if (policy.hasFinished(position)) {
@@ -213,7 +274,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Leave', style: TextStyle(color: AppColors.primary)),
+            child: const Text(
+              'Leave',
+              style: TextStyle(color: AppColors.primary),
+            ),
           ),
         ],
       ),
@@ -245,17 +309,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         body: switch (_phase) {
           _Phase.authorizing || _Phase.loading => const _Spinner(),
           _Phase.error => _MessageView(
-              message: _errorMessage ?? 'Something went wrong.',
-              primaryLabel: 'Try again',
-              onPrimary: _authorize,
-              onClose: () => context.pop(),
-            ),
+            message: _errorMessage ?? 'Something went wrong.',
+            primaryLabel: 'Try again',
+            onPrimary: _authorize,
+            onClose: () => context.pop(),
+          ),
           _Phase.ended => _MessageView(
-              message: 'The premiere has ended. Thanks for watching!',
-              primaryLabel: 'Close',
-              onPrimary: () => context.pop(),
-              onClose: () => context.pop(),
-            ),
+            message: 'The premiere has ended. Thanks for watching!',
+            primaryLabel: 'Close',
+            onPrimary: () => context.pop(),
+            onClose: () => context.pop(),
+          ),
           _Phase.playing => captured ? const _CaptureBlocked() : _buildPlayer(),
         },
       ),
@@ -266,6 +330,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final controller = _controller!;
     final policy = _policy!;
     final partyState = ref.watch(watchPartyNotifierProvider);
+    final auth = ref.watch(playbackNotifierProvider).authorization;
+    final session = ref.watch(authNotifierProvider).magicLinkSession;
+    final ticketType = (auth?.ticketType.isNotEmpty ?? false)
+        ? auth!.ticketType
+        : (session?.ticketType ?? 'single');
+    final showChatAndReactions = ticketType != 'single';
 
     if (_isLocked) {
       return GestureDetector(
@@ -335,6 +405,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       policy: policy,
                       pausesRemaining: partyState.pausesRemaining,
                       isLocked: _isLocked,
+                      showChatButton: showChatAndReactions,
                       chatVisible: _chatVisible,
                       onToggleLock: () =>
                           setState(() => _isLocked = !_isLocked),
@@ -347,7 +418,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                     ),
                   ),
                 ),
-                if (_chatVisible)
+                if (showChatAndReactions)
+                  const WatchPartyFloatingLayer(),
+                if (showChatAndReactions && _chatVisible)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -376,6 +449,7 @@ class _Controls extends StatefulWidget {
     required this.policy,
     required this.pausesRemaining,
     required this.isLocked,
+    required this.showChatButton,
     required this.chatVisible,
     required this.onToggleLock,
     required this.onToggleChat,
@@ -390,6 +464,7 @@ class _Controls extends StatefulWidget {
   final PremiereSyncPolicy policy;
   final int pausesRemaining;
   final bool isLocked;
+  final bool showChatButton;
   final bool chatVisible;
   final VoidCallback onToggleLock;
   final VoidCallback onToggleChat;
@@ -449,11 +524,17 @@ class _ControlsState extends State<_Controls> {
                       widget.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(12),
@@ -480,14 +561,18 @@ class _ControlsState extends State<_Controls> {
                     icon: const Icon(Icons.replay_10),
                     color: canRewind ? Colors.white : Colors.white38,
                     onPressed: canRewind
-                        ? () => widget.onSeek(position - const Duration(seconds: 10))
+                        ? () => widget.onSeek(
+                            position - const Duration(seconds: 10),
+                          )
                         : null,
                   ),
                   const SizedBox(width: 32),
                   IconButton(
                     iconSize: 64,
                     tooltip: value.isPlaying ? 'Pause' : 'Play',
-                    icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow),
+                    icon: Icon(
+                      value.isPlaying ? Icons.pause : Icons.play_arrow,
+                    ),
                     onPressed: widget.onTogglePlay,
                   ),
                   const SizedBox(width: 32),
@@ -497,7 +582,9 @@ class _ControlsState extends State<_Controls> {
                     icon: const Icon(Icons.forward_10),
                     color: canForward ? Colors.white : Colors.white38,
                     onPressed: canForward
-                        ? () => widget.onSeek(position + const Duration(seconds: 10))
+                        ? () => widget.onSeek(
+                            position + const Duration(seconds: 10),
+                          )
                         : null,
                   ),
                   const SizedBox(width: 24),
@@ -512,7 +599,10 @@ class _ControlsState extends State<_Controls> {
               const Spacer(),
               Row(
                 children: [
-                  Text(Formatters.clock(Duration(seconds: shownSeconds.round())), style: const TextStyle(fontSize: 12)),
+                  Text(
+                    Formatters.clock(Duration(seconds: shownSeconds.round())),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   Expanded(
                     child: SliderTheme(
                       data: SliderTheme.of(context).copyWith(
@@ -522,27 +612,40 @@ class _ControlsState extends State<_Controls> {
                         secondaryActiveTrackColor: Colors.white54,
                         thumbColor: Colors.white,
                         overlayShape: SliderComponentShape.noOverlay,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 7,
+                        ),
                       ),
                       child: Slider(
                         min: 0,
                         max: totalSeconds,
                         value: shownSeconds.clamp(0, totalSeconds).toDouble(),
-                        secondaryTrackValue:
-                            policy.liveEdge.inSeconds.toDouble().clamp(0, totalSeconds).toDouble(),
+                        secondaryTrackValue: policy.liveEdge.inSeconds
+                            .toDouble()
+                            .clamp(0, totalSeconds)
+                            .toDouble(),
                         onChanged: (v) {
-                          final clamped = policy.clamp(Duration(seconds: v.round()));
-                          setState(() => _dragSeconds = clamped.inSeconds.toDouble());
+                          final clamped = policy.clamp(
+                            Duration(seconds: v.round()),
+                          );
+                          setState(
+                            () => _dragSeconds = clamped.inSeconds.toDouble(),
+                          );
                         },
                         onChangeEnd: (v) {
-                          final target = Duration(seconds: (_dragSeconds ?? v).round());
+                          final target = Duration(
+                            seconds: (_dragSeconds ?? v).round(),
+                          );
                           setState(() => _dragSeconds = null);
                           widget.onSeek(target);
                         },
                       ),
                     ),
                   ),
-                  Text(Formatters.clock(total), style: const TextStyle(fontSize: 12)),
+                  Text(
+                    Formatters.clock(total),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ],
               ),
               Row(
@@ -555,25 +658,35 @@ class _ControlsState extends State<_Controls> {
                         backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
                       onPressed: widget.onJumpToLive,
-                      child: const Text('Jump to Live', style: TextStyle(fontSize: 12)),
-                    ),
-                  const SizedBox(width: 8),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(
-                      backgroundColor: Colors.black54,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: const BorderSide(color: Colors.white24),
+                      child: const Text(
+                        'Jump to Live',
+                        style: TextStyle(fontSize: 12),
                       ),
                     ),
-                    icon: const Icon(Icons.forum_outlined, size: 16),
-                    label: const Text('React & Chat', style: TextStyle(fontSize: 12)),
-                    onPressed: widget.onToggleChat,
-                  ),
+                  if (widget.showChatButton) ...[
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        backgroundColor: Colors.black54,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: const BorderSide(color: Colors.white24),
+                        ),
+                      ),
+                      icon: const Icon(Icons.forum_outlined, size: 16),
+                      label: const Text(
+                        'React & Chat',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      onPressed: widget.onToggleChat,
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -616,8 +729,9 @@ class _Spinner extends StatelessWidget {
   const _Spinner();
 
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2));
+  Widget build(BuildContext context) => const Center(
+    child: CircularProgressIndicator(color: Colors.white70, strokeWidth: 2),
+  );
 }
 
 class _CaptureBlocked extends StatelessWidget {
@@ -625,15 +739,15 @@ class _CaptureBlocked extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const ColoredBox(
-        color: Colors.black,
-        child: Center(
-          child: Text(
-            'Screen recording detected.\nPlayback is paused until it stops.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: AppColors.textSecondary),
-          ),
-        ),
-      );
+    color: Colors.black,
+    child: Center(
+      child: Text(
+        'Screen recording detected.\nPlayback is paused until it stops.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: AppColors.textSecondary),
+      ),
+    ),
+  );
 }
 
 class _MessageView extends StatelessWidget {
@@ -668,7 +782,11 @@ class _MessageView extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(message, textAlign: TextAlign.center, style: const TextStyle(color: AppColors.textSecondary)),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppColors.textSecondary),
+                  ),
                   const SizedBox(height: 16),
                   AppButton(label: primaryLabel, onPressed: onPrimary),
                 ],

@@ -35,15 +35,27 @@ abstract class AppConstants {
   static const double vatPercentage = 7.5;
   static const double vatMultiplier = 1.075;
 
-  /// Cloudflare Stream customer code (the `customer-<code>` subdomain),
-  /// supplied with `--dart-define=CLOUDFLARE_CUSTOMER_CODE=<code>`.
-  static const String cloudflareCustomerCode = String.fromEnvironment(
-    'CLOUDFLARE_CUSTOMER_CODE',
-  );
+  /// Mux HLS streaming base URL.
+  static const String streamBaseUrl = 'https://stream.mux.com';
 
-  /// HLS manifest for a signed [playbackToken]. Cloudflare accepts a signed
-  /// token in place of the video id.
-  static String streamManifestUrl(String playbackToken) =>
-      'https://customer-$cloudflareCustomerCode.cloudflarestream.com/'
-      '$playbackToken/manifest/video.m3u8';
+  /// Public Mux HLS manifest URL for a film trailer:
+  /// `https://stream.mux.com/<trailerStreamId>.m3u8`
+  static String trailerManifestUrl(String trailerStreamId) {
+    final id = trailerStreamId.trim();
+    if (id.startsWith('http://') || id.startsWith('https://')) {
+      return id;
+    }
+    return '$streamBaseUrl/$id.m3u8';
+  }
+
+  /// Signed Mux HLS manifest URL for a premiere movie stream:
+  /// `https://stream.mux.com/<streamId>.m3u8?token=<playbackToken>`
+  static String streamManifestUrl(
+    String playbackToken, {
+    required String streamId,
+  }) {
+    final id = streamId.trim();
+    final token = playbackToken.trim();
+    return '$streamBaseUrl/$id.m3u8?token=$token';
+  }
 }

@@ -23,6 +23,16 @@ class FilmDto {
           _json,
           ['thumbnail', 'thumbnailUrl', 'posterUrl', 'poster'],
         ),
+        trailerUrl: JsonUtils.stringOrNull(
+          _json,
+          [
+            'trailerStreamId',
+            'trailerUrl',
+            'trailer',
+            'trailerId',
+            'trailerPlaybackId',
+          ],
+        ),
         ticketPriceNgn: _json['ticketPriceNGN'] == null
             ? null
             : JsonUtils.number(_json, ['ticketPriceNGN']),
@@ -35,7 +45,9 @@ class FilmDto {
         ),
         premiereStart: JsonUtils.dateTime(_json, ['premiereStart']),
         premiereEnd: JsonUtils.dateTime(_json, ['premiereEnd']),
-        directors: _list(_json['directors'] ?? _json['director']),
+        directors: _list(
+          _json['directors'] ?? _json['director'] ?? _json['producerName'],
+        ),
         cast: _list(_json['cast']),
         studio: JsonUtils.stringOrNull(_json, ['studio']),
       );

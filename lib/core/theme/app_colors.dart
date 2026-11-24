@@ -21,6 +21,7 @@ abstract class AppDimens {
 
   static const double gutter = 20;
   static const double controlHeight = 52;
+  static const double buttonHeight = controlHeight;
   static const double radiusCard = 28;
   static const double radiusControl = 8;
   static const double radiusSheet = 28;

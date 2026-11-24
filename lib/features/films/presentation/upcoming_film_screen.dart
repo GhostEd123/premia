@@ -10,14 +10,22 @@ import '../domain/film.dart';
 import 'film_details_sheet.dart';
 
 /// Detail page for a premiere that has not started: poster, countdown and a
-/// "Get a ticket" call to action.
-class UpcomingFilmScreen extends StatelessWidget {
+/// "Get a Ticket" + Calendar call to action.
+class UpcomingFilmScreen extends StatefulWidget {
   const UpcomingFilmScreen({required this.film, super.key});
 
   final Film film;
 
   @override
+  State<UpcomingFilmScreen> createState() => _UpcomingFilmScreenState();
+}
+
+class _UpcomingFilmScreenState extends State<UpcomingFilmScreen> {
+  bool _addedToCalendar = false;
+
+  @override
   Widget build(BuildContext context) {
+    final film = widget.film;
     final start = film.premiereStart;
     return Scaffold(
       body: Stack(
@@ -44,7 +52,31 @@ class UpcomingFilmScreen extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back),
                   onPressed: () => context.pop(),
                 ),
-                const Spacer(),
+                Expanded(
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: () => FilmDetailsSheet.show(
+                        context,
+                        film,
+                        autoPlayTrailer: true,
+                      ),
+                      child: Container(
+                        width: 56,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white70, width: 1.5),
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 34,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: Column(
@@ -71,10 +103,21 @@ class UpcomingFilmScreen extends StatelessWidget {
                       ],
                       const SizedBox(height: 6),
                       GestureDetector(
-                        onTap: () => FilmDetailsSheet.show(context, film),
-                        child: const Text(
-                          'Read more',
-                          style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+                        onTap: () => FilmDetailsSheet.show(
+                          context,
+                          film,
+                          autoPlayTrailer: true,
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'View details',
+                              style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+                            ),
+                            SizedBox(width: 4),
+                            Icon(Icons.arrow_forward, size: 16, color: AppColors.primary),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -94,9 +137,60 @@ class UpcomingFilmScreen extends StatelessWidget {
                         _Countdown(target: start),
                       ],
                       const SizedBox(height: 16),
-                      AppButton(
-                        label: 'Get a ticket',
-                        onPressed: () => context.push(RoutePaths.checkout, extra: film),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: AppButton(
+                              label: 'Get a Ticket',
+                              onPressed: () =>
+                                  context.push(RoutePaths.checkout, extra: film),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            width: AppDimens.controlHeight,
+                            height: AppDimens.controlHeight,
+                            child: OutlinedButton(
+                              onPressed: () {
+                                setState(
+                                  () => _addedToCalendar = !_addedToCalendar,
+                                );
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: AppColors.surfaceHigh,
+                                    content: Text(
+                                      _addedToCalendar
+                                          ? '${film.title} added to calendar!'
+                                          : 'Removed from calendar',
+                                    ),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                foregroundColor: Colors.white,
+                                side: BorderSide(
+                                  color: _addedToCalendar
+                                      ? Colors.white
+                                      : AppColors.border,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    AppDimens.radiusControl,
+                                  ),
+                                ),
+                              ),
+                              child: Icon(
+                                _addedToCalendar
+                                    ? Icons.check
+                                    : Icons.calendar_today_outlined,
+                                size: 20,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 12),
                       Center(

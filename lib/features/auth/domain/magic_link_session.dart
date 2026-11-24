@@ -19,6 +19,12 @@ class MagicLinkSession extends Equatable {
   /// Film associated with the verified ticket (enables direct routing).
   final String? filmId;
 
+  /// True when the verified ticket is a Watch Party bundle (`bundle_2`, `bundle_4`).
+  bool get isWatchParty =>
+      ticketType == 'bundle_2' ||
+      ticketType == 'bundle_4' ||
+      ticketType.startsWith('bundle');
+
   @override
   List<Object?> get props => [userId, claimedTicketId, ticketType, filmId];
 }

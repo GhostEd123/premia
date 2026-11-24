@@ -11,7 +11,156 @@ All notable changes to the Premia project will be documented in this file.
 
 ## [24/11/26] - 2026-11-24
 
-### 1. Register `Unageo` Brand Font Family & Set as Global App Typography
+### 1. Edge-to-Edge Marquee Poster, Persistent Top Border Radius on Scroll & Upcoming Empty State Copy
+- **What Was Added / Modified:**
+  - Updated `lib/features/films/presentation/marquee_screen.dart`:
+    - Removed horizontal padding around the poster in `_NowShowingCard` so the poster image hugs the left and right screen edges while keeping `20px` horizontal padding on the details, countdown, and buttons below it.
+    - Wrapped `_NowShowingCard`'s scrollable `ListView` in a `ClipRRect` with `BorderRadius.vertical(top: Radius.circular(AppDimens.radiusCard))` so the top border radius remains curved when scrolling underneath the `"Premiering now"` and `"Upcoming Premiers"` pills.
+    - Parameterized `NoActivePremiere(title: ...)` and passed `'No upcoming premiere'` in `_UpcomingList` when there are no upcoming films.
+- **Explanation:**
+  - Ensures the poster spans edge-to-edge horizontally, retains its rounded top corners as it scrolls under the header tabs, and displays accurate empty-state copy on the Upcoming Premiers tab.
+- **General Project Impact:**
+  - Polishes the Marquee screen layout and scroll clipping behavior.
+
+---
+
+### 2. Real-Time Socket.IO Watch Party Quick Messages & Reactions with Floating Hover Animations
+- **What Was Added / Modified:**
+  - `lib/features/parties/domain/parties_repository.dart`:
+    - Added Socket.IO watch-party contract: `incomingQuickMessages`, `incomingReactions`, `connectWatchParty(partyId, socketToken)`, `sendQuickMessage(text)`, `sendReaction(emoji)`, and `disconnectWatchParty()`.
+  - `lib/features/parties/data/parties_repository_impl.dart`:
+    - Implemented Socket.IO v4 (Engine.IO v4 WebSocket transport to `AppConstants.socketBaseUrl`) authenticating with `handshake.auth.token = socketToken`, emitting `joinParty`, `sendQuickMessage`, and `sendReaction`, and listening for `receiveQuickMessage` and `receiveReaction`.
+  - `lib/features/parties/application/watch_party_notifier.dart`:
+    - Added `FloatingMessage` and `activeMessages` to `WatchPartyState` alongside `FloatingReaction`.
+    - Updated predefined quick messages (`['OMG!', 'No way!', "I didn't see that coming...", 'Lol', 'This scene is intense', 'Who is that?!', 'I love this part', 'Boring']`) and reactions (`['🥱', '😱', '😂', '❤️', '🍿']`) to match `GET /api/parties/quick-messages`.
+    - Removed persistent chat history storage; both outgoing and incoming `receiveQuickMessage` and `receiveReaction` events spawn transient floating items that drift upward and self-clean after 4 seconds.
+  - `lib/features/parties/presentation/widgets/watch_party_overlay.dart`:
+    - Created `WatchPartyFloatingLayer` so both quick messages and emoji reactions hover upward over the movie and fade out smoothly (`Curves.easeOut`).
+    - Simplified `WatchPartyOverlay` into a compact bottom picker for predefined reactions and quick messages without any stored message list.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Connected Watch Party Socket.IO automatically upon playback authorization (`auth.partyId` & `auth.socketToken`) and mounted `WatchPartyFloatingLayer` over the video player for watch party sessions.
+- **Explanation:**
+  - Replaces static local chat history with real-time Socket.IO events (`sendQuickMessage` / `receiveQuickMessage` and `sendReaction` / `receiveReaction`) where both predefined messages and reactions float upward over the movie and fade away slowly.
+- **General Project Impact:**
+  - Delivers the intended ephemeral cinema watch-party experience where reactions and quick comments float over the video without cluttering the screen with a persistent chat log.
+
+---
+
+### 2. Hide Watch Party Chat & Reactions on `PlayerScreen` for Single Tickets (`ticketType == 'single'`)
+- **What Was Added / Modified:**
+  - `lib/features/playback/domain/playback_authorization.dart`: Added `isWatchParty` getter (`ticketType != 'single' && ticketType.isNotEmpty`).
+  - `lib/features/playback/presentation/player_screen.dart`: Checked `ticketType != 'single'` (from `playbackNotifierProvider.authorization` or `authNotifierProvider.magicLinkSession`) to hide both the **`React & Chat`** button in `_Controls` and the `WatchPartyOverlay` when `ticketType == 'single'`.
+- **Explanation:**
+  - Single-viewer ticket holders do not have an associated Watch Party room, so chat and reaction controls should only appear for Watch Party tickets (`bundle_2`, `bundle_4`, or invited guests).
+- **General Project Impact:**
+  - Keeps the single-ticket viewing experience distraction-free while preserving full Watch Party chat and reactions for group bundle sessions.
+
+---
+
+### 2. Settings & Legal Screen (`SettingsScreen`) Routed from Marquee Menu Icon
+- **What Was Added / Modified:**
+  - Created `lib/features/settings/application/settings_notifier.dart` (`SettingsNotifier` and `SettingsState` managing `premierReminders` and `subtitlesByDefault` toggles).
+  - Created `lib/features/settings/presentation/settings_screen.dart` matching the design specification:
+    - Top back button, rounded dark surface card with `Premier Reminders` and `Subtitles by Defualt` red `CupertinoSwitch` toggles.
+    - Second rounded dark surface card with `Email Support`, `Terms of Service`, and `Privacy Policy` rows with leading and trailing icons.
+    - Centered bottom footer `Premia by Lumina One · v1.0`.
+  - Updated `lib/core/routing/route_paths.dart` and `lib/core/routing/app_router.dart` to register `RoutePaths.settings` (`'/settings'`).
+  - Updated `lib/features/films/presentation/marquee_screen.dart` (line 42) so the top-right hamburger menu icon navigates to `RoutePaths.settings`.
+- **Explanation:**
+  - Implements the Settings/Support/Legal screen and connects it to the Marquee header menu button.
+- **General Project Impact:**
+  - Provides ticket-holders with quick access to premiere reminder preferences, subtitle defaults, email support, legal terms, and app version info while maintaining strict layer separation.
+
+---
+
+### 2. Mux Video Streaming for Trailer (`trailerStreamId`) & Main Premiere (`streamId` + `playbackToken`)
+- **What Was Added / Modified:**
+  - `lib/core/constants/app_constants.dart`:
+    - Removed `cloudflareCustomerCode` and Cloudflare Stream URL builders.
+    - Added `AppConstants.streamBaseUrl = 'https://stream.mux.com'`.
+    - Added `AppConstants.trailerManifestUrl(String trailerStreamId)` returning `'https://stream.mux.com/$trailerStreamId.m3u8'`.
+    - Updated `AppConstants.streamManifestUrl(String playbackToken, {required String streamId})` returning `'https://stream.mux.com/$streamId.m3u8?token=$playbackToken'`.
+  - `lib/features/films/data/film_dto.dart`:
+    - Prioritized `'trailerStreamId'` when mapping `Film.trailerUrl` and included `'producerName'` fallback for `Film.directors`.
+  - `lib/features/films/presentation/film_details_sheet.dart`:
+    - Converted `_TrailerPlayerHeader` to `ConsumerStatefulWidget` and updated `_resolveTrailerUrl()` to build `https://stream.mux.com/<trailerStreamId>.m3u8` via `AppConstants.trailerManifestUrl`, automatically refreshing film data if an older cached `Film` instance in memory predated `trailerStreamId`.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Updated `_startPlayback` to stream `https://stream.mux.com/<streamId>.m3u8?token=<playbackToken>`.
+    - Fixed premature `_Phase.ended` exit when the backend's `elapsedTime` (e.g., `648s` calculated against a 95-minute film metadata duration) exceeds the actual duration of a shorter test video asset uploaded to Mux (`controller.value.duration`).
+- **Explanation:**
+  - Switches video delivery entirely from Cloudflare Stream to Mux Video using the exact Mux HLS URLs for both public trailers (`trailerStreamId`) and signed premiere movies (`streamId` + `playbackToken`), and prevents `elapsedTime` from immediately ending playback when testing with shorter Mux video clips.
+- **General Project Impact:**
+  - Ensures both the trailer in `FilmDetailsSheet` and the main movie in `PlayerScreen` stream directly from `https://stream.mux.com`.
+
+---
+
+### 2. Remove Fallback Trailer Video, Display Stream Error States & Add Console Error Logging
+- **What Was Added / Modified:**
+  - `lib/features/films/presentation/film_details_sheet.dart`:
+    - Removed `_fallbackTrailerUrl` (`bee.mp4`) from `_TrailerPlayerHeaderState`.
+    - When `film.trailerUrl` is missing or fails to initialize/play, displays an in-place error overlay with the failure message and a `Retry trailer` button.
+    - Added console logging (`debugPrint('[TrailerStreamError] ...')`) for missing trailer URLs, initialization exceptions, `controller.value.errorDescription`, and asynchronous playback errors.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Added console logging (`debugPrint('[MovieStreamError] ...')`) in `_startPlayback`, `_fail`, and `_onTick` capturing exception details, stack traces, and `controller.value.errorDescription` (without logging raw tokens).
+    - Surfaced the underlying player error description on the error view.
+  - `lib/features/films/data/film_dto.dart`:
+    - Expanded `trailerUrl` key lookup to include `trailerPlaybackId` and `trailerStreamId`.
+- **Explanation:**
+  - Eliminates the placeholder fallback video so missing or failing trailer streams are immediately visible both in the UI and in the debug console, alongside detailed diagnostics for main movie stream errors.
+- **General Project Impact:**
+  - Improves stream debugging visibility for both trailer and premiere video playback while keeping sensitive tokens out of logs.
+
+---
+
+### 2. Fix HLS Stream Manifest Resolution for Mux Signed Playback (`/playback/authorize`)
+- **What Was Added / Modified:**
+  - `lib/core/constants/app_constants.dart`:
+    - Updated `AppConstants.streamManifestUrl(playbackToken, {streamId})` to build the Mux Video signed HLS manifest URL (`https://stream.mux.com/$streamId.m3u8?token=$playbackToken`) by default when `CLOUDFLARE_CUSTOMER_CODE` is not set.
+  - `lib/features/playback/domain/playback_authorization.dart` & `lib/features/playback/data/playback_repository_impl.dart`:
+    - Added optional `drmToken` (`aud: "d"`) and `thumbnailToken` (`aud: "t"`) fields returned by `POST /api/playback/authorize`.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Removed the blocking `AppConstants.cloudflareCustomerCode.isEmpty` error check in `_startPlayback` and passed both `auth.playbackToken` and `auth.streamId` to `AppConstants.streamManifestUrl`.
+  - `lib/features/films/presentation/film_details_sheet.dart`:
+    - Updated `_resolveTrailerUrl` to resolve non-URL `trailerId` values via `https://stream.mux.com/$raw.m3u8`.
+- **Explanation:**
+  - The backend `/playback/authorize` endpoint returns Mux Video RS256 JWTs (`playbackToken` with `aud: "v"`, `drmToken` with `aud: "d"`, `thumbnailToken` with `aud: "t"`) and a Mux playback ID (`streamId`). Previously, `PlayerScreen` failed immediately with `"Streaming is not configured (missing CLOUDFLARE_CUSTOMER_CODE)."` when `CLOUDFLARE_CUSTOMER_CODE` was not passed via `--dart-define`.
+- **General Project Impact:**
+  - Enables immediate HLS premiere streaming on `PlayerScreen` using the signed `streamId` and `playbackToken` from `/playback/authorize` without requiring a Cloudflare customer code `--dart-define`.
+
+---
+
+### 2. Viewing Rights Copy, Auto-Playing Trailer Details Sheet, Marquee Calendar Action & Watch Party Lobby/Host Screens
+- **What Was Added / Modified:**
+  - `lib/core/theme/app_colors.dart`:
+    - Added `AppDimens.buttonHeight = AppDimens.controlHeight` (`52`) alias and updated `_CalendarIconButton` in `marquee_screen.dart` and `upcoming_film_screen.dart` to use `AppDimens.controlHeight`.
+  - `lib/features/films/domain/film.dart` & `lib/features/films/data/film_dto.dart`:
+    - Added optional `trailerUrl` field to `Film` and parsed `['trailerUrl', 'trailer', 'trailerId']` in `FilmDto`.
+  - `lib/features/films/presentation/film_details_sheet.dart`:
+    - Updated `_viewingRights` copy to explicitly cover the 48-to-72-hour premiere window, 10-minute rewind limit, 3-pause limit, and Guest Passes Watch Party window rules.
+    - Redesigned `FilmDetailsSheet` into a full-screen layout with a top 16:10 `_TrailerPlayerHeader` (`VideoPlayerController`) that auto-plays the film trailer when triggered from the poster Play button or "View details", complete with back arrow, play/pause toggle, elapsed/duration timestamp (`0:35 / 1:05`), and red progress bar.
+    - Added primary `Get a Ticket` CTA and stateful `Add to Calendar` / `✓ Added to Calendar` outline button above the metadata sections (`Directors`, `Cast`, `Genre`, `Studio`, `Runtime`, `Viewing Rights`).
+  - `lib/features/films/presentation/marquee_screen.dart` & `lib/features/films/presentation/upcoming_film_screen.dart`:
+    - Wired the poster Play button and `View details ->` link to open `FilmDetailsSheet` with `autoPlayTrailer: true`.
+    - Updated the pre-ticket state (`!hasTicket`) to display the `Hrs : Mins : Secs` countdown box followed by a horizontal action row with an expanded `Get a Ticket` button and a square outlined Calendar icon button (`_CalendarIconButton`).
+    - Updated the ticket-holder state (`hasTicket`) to distinguish single tickets from watch party bundles (`MagicLinkSession.isWatchParty`): single-ticket holders see **`Start Premier`** (routing directly to `RoutePaths.player`), while watch-party bundle holders (`bundle_2`, `bundle_4`) see **`Go to Lobby`** (routing to `RoutePaths.lobby`).
+  - `lib/features/parties/domain/watch_party.dart`:
+    - Updated `usedPasses` to reflect guests currently `inLobby` (`2/4`) while `hasPassesRemaining` checks total invited guests against `totalPasses`.
+  - `lib/features/parties/presentation/lobby_screen.dart`:
+    - Added stateful `Add to Calendar` / `✓ Added to Calendar` toggle button under the upcoming countdown card.
+    - Styled `_GuestPassesCard` with the crimson radial ambient glow and `Invite to party ->` button routing to `RoutePaths.hostParty`.
+    - Added horizontal dividers between the three items in `_HouseRulesCard`.
+  - `lib/features/parties/presentation/host_party_screen.dart`:
+    - Replaced the pill counter with `_GuestPassRing` (circular progress ring around `2/4`) and grouped the guest rows inside a unified surface container with horizontal dividers.
+  - `lib/features/tickets/presentation/checkout_screen.dart`:
+    - Added ticket tier selection (`Single ticket`, `Watch Party • 2 Passes`, `Watch Party • 4 Passes`) with live price breakdown refresh.
+- **Explanation:**
+  - Aligns the Marquee, Trailer Details view, Watch Party Lobby (upcoming and active premiere states), and Host Party guest management screens with the UI design specifications and updated viewing rights copy.
+- **General Project Impact:**
+  - Completes the end-to-end visual and interactive flow from Marquee trailer preview and calendar reminder to Watch Party ticket checkout, Lobby countdown/live entry, and Host Party guest magic-link invitations while strictly maintaining the 4-layer architecture.
+
+---
+
+### 2. Register `Unageo` Brand Font Family & Set as Global App Typography
 - **What Was Added / Modified:**
   - Updated `pubspec.yaml` to declare the `Unageo` font family with all 14 font variants in `assets/fonts/` (weights `300` Light through `900` Black, regular and `italic`).
   - Updated `AppTheme` in `lib/core/theme/app_theme.dart` to define `AppTheme.fontFamily = 'Unageo'` and apply it globally on `ThemeData`, `textTheme`, and `primaryTextTheme`.

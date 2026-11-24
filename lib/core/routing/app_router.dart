@@ -8,6 +8,7 @@ import '../../features/films/presentation/upcoming_film_screen.dart';
 import '../../features/parties/presentation/host_party_screen.dart';
 import '../../features/parties/presentation/lobby_screen.dart';
 import '../../features/playback/presentation/player_screen.dart';
+import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/splash/presentation/splash_screen.dart';
 import '../../features/tickets/domain/payment_intent.dart';
 import '../../features/tickets/presentation/checkout_screen.dart';
@@ -61,6 +62,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: RoutePaths.hostParty,
         builder: (_, _) => const HostPartyScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.settings,
+        builder: (_, _) => const SettingsScreen(),
       ),
       GoRoute(
         path: RoutePaths.player,

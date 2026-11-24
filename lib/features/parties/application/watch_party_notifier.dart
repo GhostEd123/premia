@@ -3,14 +3,13 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/party_guest.dart';
-import '../domain/party_message.dart';
 import '../domain/quick_messages.dart';
 import '../domain/watch_party.dart';
 import 'parties_providers.dart';
 
 const Object _keep = Object();
 
-/// An animated emoji reaction floating over the video player.
+/// An animated emoji reaction floating upward over the video player.
 class FloatingReaction {
   const FloatingReaction({
     required this.id,
@@ -21,6 +20,22 @@ class FloatingReaction {
 
   final String id;
   final String emoji;
+  final double xOffset; // 0.0 to 1.0
+  final DateTime createdAt;
+}
+
+/// A transient predefined quick message floating upward over the video player
+/// and fading away slowly (not stored in any persistent history).
+class FloatingMessage {
+  const FloatingMessage({
+    required this.id,
+    required this.text,
+    required this.xOffset,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String text;
   final double xOffset; // 0.0 to 1.0
   final DateTime createdAt;
 }
@@ -37,6 +52,7 @@ class WatchPartyState {
     this.inviteSuccess = false,
     this.inviteError,
     this.activeReactions = const [],
+    this.activeMessages = const [],
     this.showPauseModal = false,
   });
 
@@ -50,6 +66,7 @@ class WatchPartyState {
   final bool inviteSuccess;
   final String? inviteError;
   final List<FloatingReaction> activeReactions;
+  final List<FloatingMessage> activeMessages;
   final bool showPauseModal;
 
   WatchPartyState copyWith({
@@ -63,40 +80,68 @@ class WatchPartyState {
     bool? inviteSuccess,
     Object? inviteError = _keep,
     List<FloatingReaction>? activeReactions,
+    List<FloatingMessage>? activeMessages,
     bool? showPauseModal,
-  }) =>
-      WatchPartyState(
-        party: party ?? this.party,
-        quickMessages: quickMessages == _keep
-            ? this.quickMessages
-            : quickMessages as QuickMessages?,
-        syncTimestamp: syncTimestamp == _keep
-            ? this.syncTimestamp
-            : syncTimestamp as double?,
-        pausesRemaining: pausesRemaining ?? this.pausesRemaining,
-        isPaused: isPaused ?? this.isPaused,
-        isScreenLocked: isScreenLocked ?? this.isScreenLocked,
-        isSubmittingInvite: isSubmittingInvite ?? this.isSubmittingInvite,
-        inviteSuccess: inviteSuccess ?? this.inviteSuccess,
-        inviteError:
-            inviteError == _keep ? this.inviteError : inviteError as String?,
-        activeReactions: activeReactions ?? this.activeReactions,
-        showPauseModal: showPauseModal ?? this.showPauseModal,
-      );
+  }) => WatchPartyState(
+    party: party ?? this.party,
+    quickMessages: quickMessages == _keep
+        ? this.quickMessages
+        : quickMessages as QuickMessages?,
+    syncTimestamp: syncTimestamp == _keep
+        ? this.syncTimestamp
+        : syncTimestamp as double?,
+    pausesRemaining: pausesRemaining ?? this.pausesRemaining,
+    isPaused: isPaused ?? this.isPaused,
+    isScreenLocked: isScreenLocked ?? this.isScreenLocked,
+    isSubmittingInvite: isSubmittingInvite ?? this.isSubmittingInvite,
+    inviteSuccess: inviteSuccess ?? this.inviteSuccess,
+    inviteError: inviteError == _keep
+        ? this.inviteError
+        : inviteError as String?,
+    activeReactions: activeReactions ?? this.activeReactions,
+    activeMessages: activeMessages ?? this.activeMessages,
+    showPauseModal: showPauseModal ?? this.showPauseModal,
+  );
 }
 
 class WatchPartyNotifier extends Notifier<WatchPartyState> {
   Timer? _reactionCleanupTimer;
+  Timer? _messageCleanupTimer;
   Timer? _syncTimer;
+  StreamSubscription<String>? _incomingMsgSub;
+  StreamSubscription<String>? _incomingReactionSub;
+
+  static const QuickMessages _defaultQuickMessages = QuickMessages(
+    messages: [
+      'OMG!',
+      'No way!',
+      "I didn't see that coming...",
+      'Lol',
+      'This scene is intense',
+      'Who is that?!',
+      'I love this part',
+      'Boring',
+    ],
+    reactions: ['🥱', '😱', '😂', '❤️', '🍿'],
+  );
 
   @override
   WatchPartyState build() {
     ref.onDispose(() {
       _reactionCleanupTimer?.cancel();
+      _messageCleanupTimer?.cancel();
       _syncTimer?.cancel();
+      _incomingMsgSub?.cancel();
+      _incomingReactionSub?.cancel();
+      try {
+        ref.read(partiesRepositoryProvider).disconnectWatchParty();
+      } catch (_) {}
     });
 
-    // Seed initial mock watch party matching the design
+    // Listen to incoming Socket.IO events if repository is overridden
+    _subscribeSocketStreams();
+
+    // Seed initial watch party guest list matching the lobby/host design
     final initialParty = WatchParty(
       partyId: 'party-collins-101',
       hostName: 'Collins',
@@ -122,56 +167,65 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
           invitedAt: DateTime.now().subtract(const Duration(minutes: 5)),
         ),
       ],
-      messages: [
-        PartyMessage(
-          id: 'sys-1',
-          senderName: 'System',
-          text: 'JORDAN JOINED THE LOBBY',
-          timestamp: DateTime.now().subtract(const Duration(minutes: 4)),
-          isSystem: true,
-        ),
-        PartyMessage(
-          id: 'msg-1',
-          senderName: 'Collins - Host',
-          text: 'Doors open in two minutes. Get comfortable.',
-          timestamp: DateTime.now().subtract(const Duration(minutes: 3)),
-          isHost: true,
-          isAnnouncement: true,
-        ),
-        PartyMessage(
-          id: 'msg-2',
-          senderName: 'Sam Ortiz',
-          text: 'Did anyone watch the trailer? No spoilers',
-          timestamp: DateTime.now().subtract(const Duration(minutes: 2)),
-          isHost: false,
-        ),
-      ],
     );
 
-    // Fetch quick messages in background
+    // Fetch quick messages from GET /api/parties/quick-messages in background
     Future.microtask(_loadQuickMessages);
 
-    return WatchPartyState(party: initialParty);
+    return WatchPartyState(
+      party: initialParty,
+      quickMessages: _defaultQuickMessages,
+    );
+  }
+
+  void _subscribeSocketStreams() {
+    try {
+      final repo = ref.read(partiesRepositoryProvider);
+      _incomingMsgSub?.cancel();
+      _incomingReactionSub?.cancel();
+      _incomingMsgSub = repo.incomingQuickMessages.listen(
+        _spawnFloatingMessage,
+      );
+      _incomingReactionSub = repo.incomingReactions.listen(
+        _spawnFloatingReaction,
+      );
+    } catch (_) {
+      // Repository not overridden in isolated widget tests.
+    }
+  }
+
+  /// Connects to the real-time Watch Party Socket.IO room.
+  Future<void> connectSocket({
+    required String partyId,
+    required String socketToken,
+  }) async {
+    if (partyId.trim().isEmpty || socketToken.trim().isEmpty) return;
+    _subscribeSocketStreams();
+    state = state.copyWith(
+      party: state.party.copyWith(partyId: partyId.trim()),
+    );
+    try {
+      await ref
+          .read(partiesRepositoryProvider)
+          .connectWatchParty(partyId: partyId, socketToken: socketToken);
+    } catch (_) {}
+  }
+
+  /// Disconnects from the Watch Party Socket.IO room.
+  void disconnectSocket() {
+    try {
+      ref.read(partiesRepositoryProvider).disconnectWatchParty();
+    } catch (_) {}
   }
 
   Future<void> _loadQuickMessages() async {
     try {
       final messages = await ref.read(getQuickMessagesProvider)();
-      state = state.copyWith(quickMessages: messages);
+      if (messages.messages.isNotEmpty || messages.reactions.isNotEmpty) {
+        state = state.copyWith(quickMessages: messages);
+      }
     } catch (_) {
-      // Fallback defaults if offline
-      state = state.copyWith(
-        quickMessages: const QuickMessages(
-          messages: [
-            'This is so good',
-            'No way!',
-            'Did you catch that?',
-            'Brb',
-            'Can’t hear audio',
-          ],
-          reactions: ['😂', '😱', '🔥', '👏', '❤️', '🤯'],
-        ),
-      );
+      state = state.copyWith(quickMessages: _defaultQuickMessages);
     }
   }
 
@@ -227,44 +281,75 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
     state = state.copyWith(inviteSuccess: false, inviteError: null);
   }
 
-  /// Posts a chat message or host announcement to the party feed.
-  void sendMessage(String text, {bool isAnnouncement = false}) {
-    if (text.trim().isEmpty) return;
-    final message = PartyMessage(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      senderName: state.party.hostName,
-      text: text.trim(),
-      timestamp: DateTime.now(),
-      isHost: true,
-      isAnnouncement: isAnnouncement,
-    );
+  /// Emits `sendQuickMessage` via Socket.IO and spawns a transient floating
+  /// message that hovers upward over the movie and fades away.
+  void sendMessage(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
 
-    final updatedMessages = [...state.party.messages, message];
-    state = state.copyWith(
-      party: state.party.copyWith(messages: updatedMessages),
-    );
+    try {
+      ref.read(partiesRepositoryProvider).sendQuickMessage(trimmed);
+    } catch (_) {}
+
+    _spawnFloatingMessage(trimmed);
   }
 
-  /// Broadcasts an emoji reaction and triggers a floating animation on screen.
-  void sendReaction(String emoji) {
+  void _spawnFloatingMessage(String text) {
     final now = DateTime.now();
-    final randomOffset = (now.millisecond % 80) / 100.0 + 0.1; // 0.1 .. 0.9
+    final randomOffset = (now.microsecond % 65) / 100.0 + 0.12; // 0.12 .. 0.77
+
+    final floating = FloatingMessage(
+      id: 'msg-${now.microsecondsSinceEpoch}',
+      text: text,
+      xOffset: randomOffset,
+      createdAt: now,
+    );
+
+    state = state.copyWith(activeMessages: [...state.activeMessages, floating]);
+
+    _messageCleanupTimer?.cancel();
+    _messageCleanupTimer = Timer(const Duration(seconds: 4), () {
+      final cutoff = DateTime.now().subtract(const Duration(seconds: 4));
+      final remaining = state.activeMessages
+          .where((m) => m.createdAt.isAfter(cutoff))
+          .toList();
+      state = state.copyWith(activeMessages: remaining);
+    });
+  }
+
+  /// Emits `sendReaction` via Socket.IO and triggers a floating emoji animation.
+  void sendReaction(String emoji) {
+    final trimmed = emoji.trim();
+    if (trimmed.isEmpty) return;
+
+    try {
+      ref.read(partiesRepositoryProvider).sendReaction(trimmed);
+    } catch (_) {}
+
+    _spawnFloatingReaction(trimmed);
+  }
+
+  void _spawnFloatingReaction(String emoji) {
+    final now = DateTime.now();
+    final randomOffset = (now.microsecond % 80) / 100.0 + 0.1; // 0.1 .. 0.9
 
     final reaction = FloatingReaction(
-      id: '${now.microsecondsSinceEpoch}',
+      id: 'rx-${now.microsecondsSinceEpoch}',
       emoji: emoji,
       xOffset: randomOffset,
       createdAt: now,
     );
 
-    final updated = [...state.activeReactions, reaction];
-    state = state.copyWith(activeReactions: updated);
+    state = state.copyWith(
+      activeReactions: [...state.activeReactions, reaction],
+    );
 
     _reactionCleanupTimer?.cancel();
     _reactionCleanupTimer = Timer(const Duration(seconds: 4), () {
       final cutoff = DateTime.now().subtract(const Duration(seconds: 4));
-      final remaining =
-          state.activeReactions.where((r) => r.createdAt.isAfter(cutoff)).toList();
+      final remaining = state.activeReactions
+          .where((r) => r.createdAt.isAfter(cutoff))
+          .toList();
       state = state.copyWith(activeReactions: remaining);
     });
   }
@@ -283,8 +368,9 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
   }
 
   void confirmPause() {
-    final nextRemaining =
-        state.pausesRemaining > 0 ? state.pausesRemaining - 1 : 0;
+    final nextRemaining = state.pausesRemaining > 0
+        ? state.pausesRemaining - 1
+        : 0;
     state = state.copyWith(
       isPaused: true,
       pausesRemaining: nextRemaining,
@@ -303,8 +389,9 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
   /// Resyncs with backend timestamp via GET /parties/:partyId/sync.
   Future<void> pollSync() async {
     try {
-      final ts =
-          await ref.read(partiesRepositoryProvider).getSyncTimestamp(state.party.partyId);
+      final ts = await ref
+          .read(partiesRepositoryProvider)
+          .getSyncTimestamp(state.party.partyId);
       state = state.copyWith(syncTimestamp: ts);
     } catch (_) {
       // Keep local clock sync if endpoint is temporarily unreachable
@@ -314,5 +401,5 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
 
 final watchPartyNotifierProvider =
     NotifierProvider<WatchPartyNotifier, WatchPartyState>(
-  WatchPartyNotifier.new,
-);
+      WatchPartyNotifier.new,
+    );
