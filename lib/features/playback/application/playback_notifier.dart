@@ -21,12 +21,20 @@ const Object _keep = Object();
 class PlaybackState {
   const PlaybackState({
     this.isAuthorizing = false,
+    this.isWaitingForHost = false,
+    this.waitingPartyId,
     this.authorization,
     this.error,
     this.isScreenCaptured = false,
   });
 
   final bool isAuthorizing;
+
+  /// True when a guest attempted to authorize before the host started the
+  /// premiere (HTTP 409 `{ partyStatus: "waiting", partyId }`).
+  final bool isWaitingForHost;
+  final String? waitingPartyId;
+
   final PlaybackAuthorization? authorization;
   final String? error;
 
@@ -38,12 +46,18 @@ class PlaybackState {
 
   PlaybackState copyWith({
     bool? isAuthorizing,
+    bool? isWaitingForHost,
+    Object? waitingPartyId = _keep,
     Object? authorization = _keep,
     Object? error = _keep,
     bool? isScreenCaptured,
   }) =>
       PlaybackState(
         isAuthorizing: isAuthorizing ?? this.isAuthorizing,
+        isWaitingForHost: isWaitingForHost ?? this.isWaitingForHost,
+        waitingPartyId: waitingPartyId == _keep
+            ? this.waitingPartyId
+            : waitingPartyId as String?,
         authorization: authorization == _keep
             ? this.authorization
             : authorization as PlaybackAuthorization?,
@@ -89,18 +103,41 @@ class PlaybackNotifier extends Notifier<PlaybackState> {
       _authorize(PlaybackRequest.guest(inviteToken: inviteToken));
 
   Future<void> _authorize(PlaybackRequest request) async {
-    state = state.copyWith(isAuthorizing: true, error: null, authorization: null);
+    state = state.copyWith(
+      isAuthorizing: true,
+      isWaitingForHost: false,
+      error: null,
+      authorization: null,
+    );
     try {
       final auth = await ref.read(authorizePlaybackProvider)(request);
       final protection = ref.read(screenProtectionProvider);
       await protection.enable();
       state = state.copyWith(
         isAuthorizing: false,
+        isWaitingForHost: false,
         authorization: auth,
         isScreenCaptured: await protection.isCaptured(),
       );
     } on ApiException catch (e) {
-      state = state.copyWith(isAuthorizing: false, error: e.message);
+      final body = e.body;
+      final partyStatus = body is Map ? body['partyStatus']?.toString() : null;
+      final partyId = body is Map ? body['partyId']?.toString() : null;
+      if (e.statusCode == 409 &&
+          (partyStatus == 'waiting' || request.isGuest)) {
+        state = state.copyWith(
+          isAuthorizing: false,
+          isWaitingForHost: true,
+          waitingPartyId: partyId,
+          error: null,
+        );
+        return;
+      }
+      state = state.copyWith(
+        isAuthorizing: false,
+        isWaitingForHost: false,
+        error: e.message,
+      );
     }
   }
 }

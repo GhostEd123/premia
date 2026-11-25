@@ -196,9 +196,9 @@ class _NowShowingCard extends ConsumerWidget {
                       ),
                     ),
                     Positioned(
-                      left: 20,
-                      right: 20,
-                      bottom: 12,
+                      left: 20,  
+                      right: 20, 
+                      bottom: 6,
                       child: Text(
                         film.title,
                         style: const TextStyle(
@@ -553,10 +553,7 @@ class _HavePassLink extends StatelessWidget {
 
 /// Empty state with the waitlist call to action.
 class NoActivePremiere extends StatelessWidget {
-  const NoActivePremiere({
-    this.title = 'No active premiere',
-    super.key,
-  });
+  const NoActivePremiere({this.title = 'No active premiere', super.key});
 
   final String title;
 

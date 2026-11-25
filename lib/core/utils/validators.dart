@@ -22,4 +22,15 @@ abstract class Validators {
     if (v.contains(RegExp(r'\s')) || v.contains('/')) return null;
     return v;
   }
+
+  /// Extracts a guest watch-party `inviteToken` from a pasted URL
+  /// (`...?inviteToken=XYZ`). Returns null if the input is not an invite link.
+  static String? inviteTokenFromUrl(String input) {
+    final v = input.trim();
+    if (v.isEmpty) return null;
+    final uri = Uri.tryParse(v);
+    final fromQuery = uri?.queryParameters['inviteToken'];
+    if (fromQuery != null && fromQuery.isNotEmpty) return fromQuery;
+    return null;
+  }
 }

@@ -76,8 +76,20 @@ class HttpService {
   final Dio _dio;
   final CookieJar _cookieJar;
   final DeviceIdService _deviceId;
+  String? _bearerToken;
 
-  /// Rejects cleartext requests in release and attaches the device id.
+  /// Sets or clears the mobile `Authorization: Bearer <accessToken>` header
+  /// returned by `/auth/verify` or `/parties/join-lobby`.
+  void setBearerToken(String? token) {
+    final trimmed = token?.trim();
+    _bearerToken = (trimmed != null && trimmed.isNotEmpty) ? trimmed : null;
+  }
+
+  /// Current Bearer token, if any.
+  String? get bearerToken => _bearerToken;
+
+  /// Rejects cleartext requests in release and attaches the device id and
+  /// Bearer token (when present).
   InterceptorsWrapper _secureRequestInterceptor() => InterceptorsWrapper(
         onRequest: (options, handler) async {
           if (kReleaseMode && options.uri.scheme != 'https') {
@@ -91,6 +103,10 @@ class HttpService {
           }
           options.headers[AppConstants.deviceIdHeader] =
               await _deviceId.getOrCreate();
+          final token = _bearerToken;
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
           handler.next(options);
         },
       );
@@ -117,8 +133,11 @@ class HttpService {
   Future<dynamic> putForm(String path, FormData form) =>
       _send('PUT', path, body: form);
 
-  /// Drops all session cookies (e.g. on logout).
-  Future<void> clearSession() => _cookieJar.deleteAll();
+  /// Drops all session cookies and Bearer token (e.g. on logout).
+  Future<void> clearSession() async {
+    _bearerToken = null;
+    await _cookieJar.deleteAll();
+  }
 
   // --- Internals ---
 

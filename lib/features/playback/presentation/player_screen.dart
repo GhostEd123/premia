@@ -13,13 +13,14 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../auth/application/auth_notifier.dart';
 import '../../parties/application/watch_party_notifier.dart';
+import '../../parties/domain/watch_party.dart';
 import '../../parties/presentation/widgets/pause_premiere_dialog.dart';
 import '../../parties/presentation/widgets/watch_party_overlay.dart';
 import '../application/playback_notifier.dart';
 import '../domain/playback_authorization.dart';
 import '../domain/premiere_sync_policy.dart';
 
-enum _Phase { authorizing, loading, playing, ended, error }
+enum _Phase { authorizing, waitingForHost, loading, playing, ended, error }
 
 /// Landscape premiere player.
 ///
@@ -43,11 +44,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   VideoPlayerController? _controller;
   PremiereSyncPolicy? _policy;
   Timer? _hideTimer;
+  Timer? _hostSyncTimer;
+  Timer? _guestSyncPollTimer;
+  DateTime? _authorizeStartedAt;
+  bool _isHostPaused = false;
+  bool _isApplyingHostSync = false;
+  bool _isStartingPlayback = false;
+  String? _activeStreamId;
   _Phase _phase = _Phase.authorizing;
   String? _errorMessage;
   bool _controlsVisible = true;
   bool _chatVisible = false;
   bool _isLocked = false;
+
+  bool get _isGuest {
+    final session = ref.read(authNotifierProvider).magicLinkSession;
+    return (widget.inviteToken?.isNotEmpty ?? false) ||
+        (session != null && !session.isHost);
+  }
 
   @override
   void initState() {
@@ -64,6 +78,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _hostSyncTimer?.cancel();
+    _guestSyncPollTimer?.cancel();
     _controller
       ?..removeListener(_onTick)
       ..dispose();
@@ -76,16 +92,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   // --- Authorization & setup ---
 
   Future<void> _authorize() async {
-    final invite = widget.inviteToken;
+    if (_isStartingPlayback || _phase == _Phase.playing) return;
+    _authorizeStartedAt = DateTime.now();
+    final session = ref.read(authNotifierProvider).magicLinkSession;
+    final invite = widget.inviteToken ?? session?.inviteToken;
     if (invite != null && invite.isNotEmpty) {
       setState(() => _phase = _Phase.authorizing);
       await ref.read(playbackNotifierProvider.notifier).authorizeGuest(invite);
       return;
     }
-    final ticketId = ref
-        .read(authNotifierProvider)
-        .magicLinkSession
-        ?.claimedTicketId;
+    final ticketId = session?.claimedTicketId;
     if (ticketId == null || ticketId.isEmpty) {
       _fail('Open your ticket link to start the premiere.');
       return;
@@ -97,16 +113,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _startPlayback(PlaybackAuthorization auth) async {
-    _controller
-      ?..removeListener(_onTick)
-      ..dispose();
+    if (_isStartingPlayback) return;
+    if (_phase == _Phase.playing &&
+        _controller != null &&
+        _controller!.value.isInitialized &&
+        _activeStreamId == auth.streamId) {
+      return;
+    }
+
+    _isStartingPlayback = true;
+    _hostSyncTimer?.cancel();
+    _guestSyncPollTimer?.cancel();
+    final previousController = _controller;
     _controller = null;
+    if (previousController != null) {
+      previousController.removeListener(_onTick);
+      await previousController.dispose();
+    }
 
     if (auth.streamId.trim().isEmpty || auth.playbackToken.trim().isEmpty) {
+      _isStartingPlayback = false;
       _fail('Missing Mux streamId or playbackToken from /playback/authorize.');
       return;
     }
 
+    _activeStreamId = auth.streamId;
     setState(() => _phase = _Phase.loading);
     final manifestUrl = AppConstants.streamManifestUrl(
       auth.playbackToken,
@@ -118,13 +149,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       '(elapsedTime: ${auth.elapsedSeconds}s, partyId: ${auth.partyId})',
     );
 
-    if (auth.isWatchParty &&
-        (auth.partyId?.isNotEmpty ?? false) &&
-        (auth.socketToken?.isNotEmpty ?? false)) {
+    final partyState = ref.read(watchPartyNotifierProvider);
+    final effectivePartyId = (auth.partyId?.isNotEmpty ?? false)
+        ? auth.partyId!
+        : partyState.party.partyId;
+    final effectiveSocketToken = (auth.socketToken?.isNotEmpty ?? false)
+        ? auth.socketToken!
+        : (partyState.party.socketToken ?? '');
+    if (effectivePartyId.isNotEmpty && effectiveSocketToken.isNotEmpty) {
       unawaited(
         ref.read(watchPartyNotifierProvider.notifier).connectSocket(
-              partyId: auth.partyId!,
-              socketToken: auth.socketToken!,
+              partyId: effectivePartyId,
+              socketToken: effectiveSocketToken,
             ),
       );
     }
@@ -134,33 +170,79 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     try {
       await controller.initialize();
       final videoDuration = controller.value.duration;
+      // Compensate for the time spent requesting authorization and initializing
+      // the HLS manifest so a joining viewer doesn't start behind the live edge.
+      final setupLag = _authorizeStartedAt != null
+          ? DateTime.now().difference(_authorizeStartedAt!)
+          : Duration.zero;
+      final compensatedPosition = auth.seekPosition + setupLag;
+
       // If the backend's elapsedTime exceeds the actual duration of the video
       // asset uploaded to Mux (e.g. a short test clip uploaded for a 95-min
       // film entry), clamp/wrap the seek position so the stream plays instead
       // of immediately terminating as ended.
       final effectiveElapsed =
-          (videoDuration > Duration.zero && auth.seekPosition >= videoDuration)
+          (videoDuration > Duration.zero &&
+                  compensatedPosition >= videoDuration)
               ? Duration(
-                  seconds: videoDuration.inSeconds > 0
-                      ? auth.elapsedSeconds % videoDuration.inSeconds
+                  milliseconds: videoDuration.inMilliseconds > 0
+                      ? compensatedPosition.inMilliseconds %
+                          videoDuration.inMilliseconds
                       : 0,
                 )
-              : auth.seekPosition;
+              : compensatedPosition;
 
       final policy = PremiereSyncPolicy(
         elapsedAtAuthorization: effectiveElapsed,
         duration: videoDuration,
       );
       _policy = policy;
-      if (effectiveElapsed > Duration.zero) {
-        await controller.seekTo(policy.clamp(effectiveElapsed));
-      }
-      controller.addListener(_onTick);
+
+      // Start playback first before seeking so Android ExoPlayer binds its
+      // video Texture surface cleanly instead of freezing on a single frame.
       await controller.play();
+
+      final latestHostSync =
+          ref.read(watchPartyNotifierProvider).hostPlaybackSync;
+      Duration initialTarget = effectiveElapsed;
+      if (_isGuest && latestHostSync != null) {
+        _isHostPaused = latestHostSync.isPaused;
+        if (latestHostSync.currentTimeSeconds > 0) {
+          initialTarget = latestHostSync.position;
+        }
+      }
+
+      if (initialTarget > Duration.zero) {
+        final clampedInitial = (videoDuration > Duration.zero &&
+                initialTarget >= videoDuration)
+            ? Duration(
+                milliseconds:
+                    initialTarget.inMilliseconds % videoDuration.inMilliseconds,
+              )
+            : initialTarget;
+        await controller.seekTo(clampedInitial);
+      }
+
+      controller.addListener(_onTick);
+      if (_isGuest && _isHostPaused) {
+        await controller.pause();
+      } else if (!controller.value.isPlaying) {
+        await controller.play();
+      }
+      _isStartingPlayback = false;
       if (!mounted) return;
       setState(() => _phase = _Phase.playing);
       _scheduleHide();
+
+      // If this user is the host of a watch party, broadcast periodic `timeUpdate`
+      // heartbeats every 3 seconds so guests stay locked to the host's time & pause state.
+      if (!_isGuest && (auth.isWatchParty || effectivePartyId.isNotEmpty)) {
+        _startHostSyncBroadcaster();
+      } else if (_isGuest && effectivePartyId.isNotEmpty) {
+        _startGuestSyncPoller(effectivePartyId);
+      }
     } catch (e, st) {
+      _isStartingPlayback = false;
       final desc = controller.value.errorDescription;
       debugPrint(
         '[MovieStreamError] Failed to initialize Mux premiere stream '
@@ -205,21 +287,128 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       if (mounted) setState(() => _phase = _Phase.ended);
       return;
     }
+    // Keep guest paused if the host has paused the movie
+    if (_isGuest && _isHostPaused && c.value.isPlaying) {
+      c.pause();
+      return;
+    }
     // Never ahead of live (e.g. after a stall that jumped forward).
-    if (position > policy.liveEdge + const Duration(seconds: 2)) {
+    if (!_isGuest && position > policy.liveEdge + const Duration(seconds: 2)) {
       c.seekTo(policy.liveEdge);
     }
   }
 
+  void _startHostSyncBroadcaster() {
+    _hostSyncTimer?.cancel();
+    _broadcastHostState(action: 'sync');
+    _hostSyncTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || _phase != _Phase.playing) return;
+      _broadcastHostState(action: 'sync');
+    });
+  }
+
+  void _startGuestSyncPoller(String partyId) {
+    _guestSyncPollTimer?.cancel();
+    _guestSyncPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || _phase != _Phase.playing || !_isGuest) return;
+      final lastSync = ref.read(watchPartyNotifierProvider).hostPlaybackSync;
+      // Only poll REST `/parties/:partyId/sync` if we haven't received a real-time
+      // Socket.IO `syncVideo` / `syncTimestamp` event within the last 6 seconds.
+      if (lastSync == null ||
+          DateTime.now().difference(lastSync.receivedAt) >
+              const Duration(seconds: 6)) {
+        ref.read(watchPartyNotifierProvider.notifier).pollSync(partyId: partyId);
+      }
+    });
+  }
+
+  void _broadcastHostState({String action = 'sync'}) {
+    if (_isGuest) return;
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final posSeconds = c.value.position.inMilliseconds / 1000.0;
+    final paused = !c.value.isPlaying;
+    ref.read(watchPartyNotifierProvider.notifier).broadcastHostPlaybackState(
+          currentTimeSeconds: posSeconds,
+          isPaused: paused,
+          action: action,
+        );
+  }
+
+  Future<void> _applyHostPlaybackSync(PartyPlaybackSync sync) async {
+    if (!_isGuest || _isApplyingHostSync) return;
+    final c = _controller;
+    if (c == null || !c.value.isInitialized || _phase != _Phase.playing) return;
+
+    _isApplyingHostSync = true;
+    try {
+      if (sync.isEnded) {
+        await c.pause();
+        if (mounted) {
+          setState(() => _phase = _Phase.ended);
+        }
+        return;
+      }
+
+      final hostPausedChanged = _isHostPaused != sync.isPaused;
+      _isHostPaused = sync.isPaused;
+      final isExplicitHostAction =
+          sync.action == 'pause' ||
+          sync.action == 'play' ||
+          sync.action == 'resume' ||
+          sync.action == 'seek';
+
+      if (sync.currentTimeSeconds > 0) {
+        final videoDuration = c.value.duration;
+        var target = sync.position;
+        if (videoDuration > Duration.zero && target > videoDuration) {
+          target = Duration(
+            milliseconds:
+                target.inMilliseconds % videoDuration.inMilliseconds,
+          );
+        }
+        final currentPos = c.value.position;
+        final driftMs = (currentPos - target).inMilliseconds.abs();
+        // On explicit host action (pause / play / seek) snap if > 600ms off;
+        // on periodic `syncTimestamp` heartbeats, only seek if drift > 3000ms
+        // so HLS doesn't repeatedly seek back to the same 2-4s keyframe!
+        final thresholdMs = (isExplicitHostAction || hostPausedChanged)
+            ? 600
+            : 3000;
+        if (driftMs > thresholdMs) {
+          await c.seekTo(target);
+        }
+      }
+
+      if (sync.isPaused) {
+        if (c.value.isPlaying) {
+          await c.pause();
+        }
+      } else {
+        if (!c.value.isPlaying) {
+          await c.play();
+        }
+      }
+      if (hostPausedChanged && mounted) {
+        setState(() {});
+      }
+    } finally {
+      _isApplyingHostSync = false;
+    }
+  }
+
   Future<void> _seekTo(Duration target) async {
+    if (_isGuest) return;
     final c = _controller;
     final policy = _policy;
     if (c == null || policy == null) return;
     await c.seekTo(policy.clamp(target));
+    _broadcastHostState(action: 'seek');
     _scheduleHide();
   }
 
   void _togglePlay() {
+    if (_isGuest) return;
     final c = _controller;
     if (c == null) return;
     if (c.value.isPlaying) {
@@ -228,14 +417,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         context,
         pausesRemaining: partyState.pausesRemaining,
         onKeepWatching: () {},
-        onConfirmPause: () {
+        onConfirmPause: () async {
           ref.read(watchPartyNotifierProvider.notifier).confirmPause();
-          c.pause();
+          await c.pause();
+          _broadcastHostState(action: 'pause');
         },
       );
     } else {
       ref.read(watchPartyNotifierProvider.notifier).resume();
-      c.play();
+      c.play().then((_) => _broadcastHostState(action: 'play'));
     }
     _scheduleHide();
   }
@@ -282,7 +472,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ],
       ),
     );
-    if ((leave ?? false) && mounted) context.pop();
+    if ((leave ?? false) && mounted) {
+      if (!_isGuest) {
+        _broadcastHostState(action: 'pause');
+        ref.read(watchPartyNotifierProvider.notifier).disconnectSocket();
+      }
+      context.pop();
+    }
   }
 
   // --- UI ---
@@ -292,11 +488,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     ref.listen(playbackNotifierProvider, (prev, next) {
       final auth = next.authorization;
       if (auth != null && prev?.authorization != auth) _startPlayback(auth);
+      if (next.isWaitingForHost && prev?.isWaitingForHost != true) {
+        setState(() => _phase = _Phase.waitingForHost);
+        final partyId = next.waitingPartyId;
+        if (partyId != null && partyId.isNotEmpty) {
+          unawaited(
+            ref
+                .read(watchPartyNotifierProvider.notifier)
+                .fetchLobby(partyId: partyId),
+          );
+        }
+      }
       if (next.error != null && next.error != prev?.error) _fail(next.error!);
       if (next.isScreenCaptured && prev?.isScreenCaptured != true) {
         _controller?.pause();
       }
     });
+
+    // When `partyStarted` fires over Socket.IO while waiting for host,
+    // automatically re-authorize playback so the movie starts immediately.
+    ref.listen(
+      watchPartyNotifierProvider.select((s) => s.partyStartedEvent),
+      (prev, next) {
+        if (next != null &&
+            next != prev &&
+            _phase == _Phase.waitingForHost &&
+            mounted) {
+          _authorize();
+        }
+      },
+    );
+
+    // Keep guest playback position and play/pause state locked to the host.
+    ref.listen(
+      watchPartyNotifierProvider.select((s) => s.hostPlaybackSync),
+      (prev, next) {
+        if (next != null && next != prev && _isGuest && mounted) {
+          _applyHostPlaybackSync(next);
+        }
+      },
+    );
+
     final captured = ref.watch(playbackNotifierProvider).isScreenCaptured;
 
     return PopScope(
@@ -308,6 +540,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         backgroundColor: Colors.black,
         body: switch (_phase) {
           _Phase.authorizing || _Phase.loading => const _Spinner(),
+          _Phase.waitingForHost => _WaitingForHostDialog(
+            onClose: () => context.pop(),
+          ),
           _Phase.error => _MessageView(
             message: _errorMessage ?? 'Something went wrong.',
             primaryLabel: 'Try again',
@@ -335,7 +570,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final ticketType = (auth?.ticketType.isNotEmpty ?? false)
         ? auth!.ticketType
         : (session?.ticketType ?? 'single');
-    final showChatAndReactions = ticketType != 'single';
+    final showChatAndReactions =
+        ticketType != 'single' ||
+        _isGuest ||
+        (auth?.partyId?.isNotEmpty ?? false) ||
+        partyState.party.partyId.isNotEmpty;
 
     if (_isLocked) {
       return GestureDetector(
@@ -394,6 +633,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               fit: StackFit.expand,
               children: [
                 if (value.isBuffering) const _Spinner(),
+                if (_isGuest && _isHostPaused)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.pause_circle_filled,
+                            color: AppColors.primary,
+                            size: 20,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Host paused the premiere',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 AnimatedOpacity(
                   opacity: _controlsVisible ? 1 : 0,
                   duration: const Duration(milliseconds: 200),
@@ -404,6 +676,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                       value: value,
                       policy: policy,
                       pausesRemaining: partyState.pausesRemaining,
+                      isGuest: _isGuest,
+                      isHostPaused: _isHostPaused,
                       isLocked: _isLocked,
                       showChatButton: showChatAndReactions,
                       chatVisible: _chatVisible,
@@ -448,6 +722,8 @@ class _Controls extends StatefulWidget {
     required this.value,
     required this.policy,
     required this.pausesRemaining,
+    required this.isGuest,
+    required this.isHostPaused,
     required this.isLocked,
     required this.showChatButton,
     required this.chatVisible,
@@ -463,6 +739,8 @@ class _Controls extends StatefulWidget {
   final VideoPlayerValue value;
   final PremiereSyncPolicy policy;
   final int pausesRemaining;
+  final bool isGuest;
+  final bool isHostPaused;
   final bool isLocked;
   final bool showChatButton;
   final bool chatVisible;
@@ -487,12 +765,14 @@ class _ControlsState extends State<_Controls> {
     final total = value.duration;
     final position = value.position;
     final behind = policy.behindLive(position);
-    final isLive = policy.isLive(position);
+    final isLive = widget.isGuest || policy.isLive(position);
     final shownSeconds = _dragSeconds ?? position.inSeconds.toDouble();
     final totalSeconds = total.inSeconds < 1 ? 1.0 : total.inSeconds.toDouble();
 
-    final canRewind = position > policy.earliest + const Duration(seconds: 1);
-    final canForward = !isLive;
+    final canRewind =
+        !widget.isGuest &&
+        position > policy.earliest + const Duration(seconds: 1);
+    final canForward = !widget.isGuest && !isLive;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -530,64 +810,89 @@ class _ControlsState extends State<_Controls> {
                       ),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white24),
-                    ),
-                    child: Text(
-                      '|| -- ${widget.pausesRemaining} pauses left',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
+                  if (!widget.isGuest)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Text(
+                        '|| -- ${widget.pausesRemaining} pauses left',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Text(
+                        widget.isHostPaused
+                            ? 'Paused by Host'
+                            : 'Synced with Host',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
               const Spacer(),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton(
-                    iconSize: 44,
-                    tooltip: 'Back 10 seconds',
-                    icon: const Icon(Icons.replay_10),
-                    color: canRewind ? Colors.white : Colors.white38,
-                    onPressed: canRewind
-                        ? () => widget.onSeek(
-                            position - const Duration(seconds: 10),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 32),
-                  IconButton(
-                    iconSize: 64,
-                    tooltip: value.isPlaying ? 'Pause' : 'Play',
-                    icon: Icon(
-                      value.isPlaying ? Icons.pause : Icons.play_arrow,
+                  if (!widget.isGuest) ...[
+                    IconButton(
+                      iconSize: 44,
+                      tooltip: 'Back 10 seconds',
+                      icon: const Icon(Icons.replay_10),
+                      color: canRewind ? Colors.white : Colors.white38,
+                      onPressed: canRewind
+                          ? () => widget.onSeek(
+                              position - const Duration(seconds: 10),
+                            )
+                          : null,
                     ),
-                    onPressed: widget.onTogglePlay,
-                  ),
-                  const SizedBox(width: 32),
-                  IconButton(
-                    iconSize: 44,
-                    tooltip: 'Forward 10 seconds',
-                    icon: const Icon(Icons.forward_10),
-                    color: canForward ? Colors.white : Colors.white38,
-                    onPressed: canForward
-                        ? () => widget.onSeek(
-                            position + const Duration(seconds: 10),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 24),
+                    const SizedBox(width: 32),
+                    IconButton(
+                      iconSize: 64,
+                      tooltip: value.isPlaying ? 'Pause' : 'Play',
+                      icon: Icon(
+                        value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      ),
+                      onPressed: widget.onTogglePlay,
+                    ),
+                    const SizedBox(width: 32),
+                    IconButton(
+                      iconSize: 44,
+                      tooltip: 'Forward 10 seconds',
+                      icon: const Icon(Icons.forward_10),
+                      color: canForward ? Colors.white : Colors.white38,
+                      onPressed: canForward
+                          ? () => widget.onSeek(
+                              position + const Duration(seconds: 10),
+                            )
+                          : null,
+                    ),
+                    const SizedBox(width: 24),
+                  ],
                   IconButton(
                     iconSize: 28,
                     tooltip: 'Lock screen',
@@ -612,8 +917,9 @@ class _ControlsState extends State<_Controls> {
                         secondaryActiveTrackColor: Colors.white54,
                         thumbColor: Colors.white,
                         overlayShape: SliderComponentShape.noOverlay,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 7,
+                        thumbShape: RoundSliderThumbShape(
+                          enabledThumbRadius: widget.isGuest ? 0 : 7,
+                          disabledThumbRadius: 0,
                         ),
                       ),
                       child: Slider(
@@ -624,21 +930,26 @@ class _ControlsState extends State<_Controls> {
                             .toDouble()
                             .clamp(0, totalSeconds)
                             .toDouble(),
-                        onChanged: (v) {
-                          final clamped = policy.clamp(
-                            Duration(seconds: v.round()),
-                          );
-                          setState(
-                            () => _dragSeconds = clamped.inSeconds.toDouble(),
-                          );
-                        },
-                        onChangeEnd: (v) {
-                          final target = Duration(
-                            seconds: (_dragSeconds ?? v).round(),
-                          );
-                          setState(() => _dragSeconds = null);
-                          widget.onSeek(target);
-                        },
+                        onChanged: widget.isGuest
+                            ? null
+                            : (v) {
+                                final clamped = policy.clamp(
+                                  Duration(seconds: v.round()),
+                                );
+                                setState(
+                                  () => _dragSeconds = clamped.inSeconds
+                                      .toDouble(),
+                                );
+                              },
+                        onChangeEnd: widget.isGuest
+                            ? null
+                            : (v) {
+                                final target = Duration(
+                                  seconds: (_dragSeconds ?? v).round(),
+                                );
+                                setState(() => _dragSeconds = null);
+                                widget.onSeek(target);
+                              },
                       ),
                     ),
                   ),
@@ -748,6 +1059,76 @@ class _CaptureBlocked extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _WaitingForHostDialog extends StatelessWidget {
+  const _WaitingForHostDialog({required this.onClose});
+
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Align(
+            alignment: Alignment.topLeft,
+            child: IconButton(
+              tooltip: 'Close',
+              icon: const Icon(Icons.close, color: Colors.white),
+              onPressed: onClose,
+            ),
+          ),
+          Center(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 360),
+              margin: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      color: AppColors.primary,
+                      strokeWidth: 2.5,
+                    ),
+                  ),
+                  SizedBox(height: 18),
+                  Text(
+                    'Waiting for Host',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Please wait for the host to start the premiere. Your stream will begin automatically.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      color: AppColors.textSecondary,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MessageView extends StatelessWidget {

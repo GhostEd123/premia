@@ -54,13 +54,15 @@ Key domain mechanics every developer on the codebase should know:
 This version of the backend introduces major improvements across security, payments, real-time synchronization, and admin tooling compared to the previous codebase:
 
 ### 1. Payment Security, 7.5% VAT & Auto-Refunds
+
 - **Server-to-Server Webhook Verification:** `POST /api/webhooks` no longer trusts incoming webhook payloads directly. It calls TransactPay's `/payment/order/verify` endpoint using `TRANSACTPAY_SECRET_KEY` (with a fallback to `TRANSACTPAY_PUBLIC_KEY` on `401`) and verifies `statusId === 5` and `status === 'Successful'`.
 - **7.5% VAT Model:** Added `resolveTicketPrice()` and `vatComponentOf()` in `src/controllers/ticketController.js`. All checkout amounts now include 7.5% VAT, and `Ticket.vat` is populated on every purchase.
 - **Price & Currency Fraud Guard:** Webhooks verify that the amount and currency confirmed by TransactPay match the expected VAT-inclusive film price (`paymentMatchesFilm()`).
 - **Region Arbitrage Prevention:** Re-enabled live GeoIP detection (`detectUserCountry(req)`). Non-Nigerian IPs attempting to pass `currency: 'NGN'` to buy at Naira prices are rejected with `400 Currency not available for your region`.
-- **Automatic Post-Premiere Refunds:** If a payment webhook arrives *after* `film.premiereEnd`, the ticket is minted with `status: 'refund_due'`, an automatic refund is triggered via `src/utils/transactpayRefund.js` (`POST /payment/refund`), and the ticket is marked `status: 'refunded'` without sending a magic link.
+- **Automatic Post-Premiere Refunds:** If a payment webhook arrives _after_ `film.premiereEnd`, the ticket is minted with `status: 'refund_due'`, an automatic refund is triggered via `src/utils/transactpayRefund.js` (`POST /payment/refund`), and the ticket is marked `status: 'refunded'` without sending a magic link.
 
 ### 2. Authentication, Sessions & Role Hierarchy
+
 - **Token Role Whitelist (`SESSION_ROLES`):** Both `src/middleware/authenticate.js` and `src/controllers/playbackController.js` now enforce `SESSION_ROLES = ['user', 'Operations_Admin', 'Super_Admin']`. Special-purpose JWTs (`reset_token`, `invited_guest`) can no longer be replayed as session cookies or bearer tokens.
 - **Server-Side Session Revocation (`sessionVersion`):** Added `sessionVersion` to the `User` model and JWT payload. Calling `POST /api/auth/logout` increments `user.sessionVersion` in MongoDB and clears the `token` cookie, immediately invalidating any active JWTs.
 - **Redis Magic Link Tracking:** Removed the MongoDB `AuthToken` model. Magic links now embed a `jti` UUID stored in Redis (`magiclink:<jti>`) with a TTL matching `premiereEnd`.
@@ -74,17 +76,20 @@ This version of the backend introduces major improvements across security, payme
   - Admins cannot suspend or modify accounts at or above their own rank, cannot modify their own account, and cannot suspend or demote the last active `Super_Admin` (`409 Conflict`).
 
 ### 3. Distributed Rate Limiting & Proxy Trust
+
 - **Redis-Backed Limiters:** All limiters in `src/middleware/rateLimiter.js` now use `rate-limit-redis` (`RedisStore`) instead of local memory.
 - **Signed Proxy IP Resolution (`PREMIA_PROXY_KEY`):** Requests carrying a valid `x-premia-proxy-key` header from the Next.js proxy are rate-limited by the real client IP in `x-forwarded-for` (with IPv6 `/56` subnet grouping via `ipKeyGenerator`), preventing all users behind the proxy from sharing a single rate-limit bucket.
 - **Higher Per-Visitor Allowance:** Increased `apiLimiter` from `20 req/min` to `120 req/min` per IP to accommodate Nigerian carrier-grade NAT (CGNAT).
 
 ### 4. Playback & Watch Party Reliability
+
 - **Lagos Timezone (`+01:00`) Scheduling:** Naive datetime strings (`YYYY-MM-DDTHH:mm`) submitted when creating or updating films are now explicitly parsed in Lagos time (`+01:00`, WAT) rather than the server host's local timezone.
 - **Mandatory Film Duration:** `Film.duration` is now required (`min: 1`), and `playbackController` refuses to open a stream (`500`) if a film lacks a valid duration instead of defaulting to 2 hours (`7200s`).
 - **Cross-Origin Socket Token (`socketToken`):** `POST /api/playback/authorize` now returns a signed `socketToken` and `partyId` so the frontend can authenticate Socket.IO connections via `handshake.auth.token` without relying on cross-origin cookies.
 - **Redis-Backed Watch Party Teardowns:** Moved the 30-second host disconnect grace timer out of local process memory into Redis (`party_teardown:<partyId>`) with a 10-second `scanIterator` reconciler loop across server instances.
 
 ### 5. Multi-Currency Analytics & Email Failover
+
 - **Per-Currency Analytics:** Financial endpoints (`/api/analytics/*`) no longer sum `NGN` and `USD` into a single combined number. All revenue figures are grouped by currency (`byCurrency` / `revenueByCurrency`), and refunded tickets (`refund_due`, `refunded`) are excluded.
 - **3-Tier Email Failover & Dark Cinema Templates:** `src/services/emailService.js` now attempts delivery via **Resend REST API** first (when `SMTP_PASS` starts with `re_`), then **Nodemailer SMTP**, and finally **SendGrid**, using a redesigned dark cinema email template with Google Calendar and Outlook/iOS calendar links.
 
@@ -94,48 +99,49 @@ This version of the backend introduces major improvements across security, payme
 
 ### Summary of All Endpoints
 
-| Method | Endpoint | Status | Auth / Permission | Rate Limiter(s) |
-| :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | **NEW** | Public | None (for uptime monitors) |
-| `GET` | `/debug/webhook-status` | **NEW** | Public (Diagnostic) | None |
-| `GET` | `/api/test-email/film-check` | **NEW** | Public (Diagnostic) | `apiLimiter` |
-| `GET` | `/api/auth/verify` | **UPDATED** | Public (Magic Link JWT) | `apiLimiter` |
-| `POST` | `/api/auth/resend-magic-link` | **NEW** | Public | `apiLimiter`, `resendMagicLinkLimiter`, `resendMagicLinkEmailLimiter` |
-| `POST` | `/api/auth/logout` | **NEW** | Public (Reads cookie/Bearer) | `apiLimiter` |
-| `POST` | `/api/auth/admin/login` | **UPDATED** | Public | `apiLimiter`, `adminLoginLimiter` |
-| `POST` | `/api/auth/admin/forgot-password` | **UPDATED** | Public | `apiLimiter`, `emailLimiter` |
-| `POST` | `/api/auth/admin/verify-otp` | **UPDATED** | Public | `apiLimiter`, `otpLimiter` |
-| `POST` | `/api/auth/admin/reset-password` | **UPDATED** | Bearer (`reset_token`) | `apiLimiter`, `otpLimiter` |
-| `POST` | `/api/auth/admin/staff` | **UPDATED** | `Super_Admin` | `apiLimiter` |
-| `GET` | `/api/films` | **UPDATED** | Public | `apiLimiter` |
-| `GET` | `/api/films/now-showing` | **UPDATED** | Public | `apiLimiter` |
-| `GET` | `/api/films/:id` | **UPDATED** | Public | `apiLimiter` |
-| `GET` | `/api/tickets/price-breakdown` | **NEW** | Public | `apiLimiter` |
-| `POST` | `/api/tickets/initiate` | **UPDATED** | Public | `apiLimiter` |
-| `POST` | `/api/playback/authorize` | **UPDATED** | Cookie (`token`) or `inviteToken` | `apiLimiter` |
-| `GET` | `/api/parties/quick-messages` | **EXISTING** | Public | `apiLimiter` |
-| `GET` | `/api/parties/:partyId/sync` | **EXISTING** | Public | `apiLimiter` |
-| `POST` | `/api/admin/films` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `PUT` | `/api/admin/films/:id` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/admin/users` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/admin/users/export` | **NEW** | `Operations_Admin` | `apiLimiter` |
-| `PATCH` | `/api/admin/users/:id/status` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `PATCH` | `/api/admin/users/:id/role` | **UPDATED** | `Super_Admin` | `apiLimiter` |
-| `GET` | `/api/admin/tickets` | **NEW** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/admin/tickets/export` | **NEW** | `Operations_Admin` | `apiLimiter` |
-| `POST` | `/api/admin/tickets/:id/resend` | **NEW** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/analytics/films/:id` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/analytics/platform` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `GET` | `/api/analytics/financials` | **UPDATED** | `Operations_Admin` | `apiLimiter` |
-| `POST` | `/api/waitlist` | **NEW** | Public | `apiLimiter` |
-| `POST` | `/api/webhooks` | **UPDATED** | Public (Server-Verified) | `webhookLimiter`, `webhookReferenceLimiter` |
-| `POST` | `src/routes/contact.js` (`/`) | **NEW (Unmounted)** | Public | `contactFormLimiter` |
+| Method  | Endpoint                          | Status              | Auth / Permission                 | Rate Limiter(s)                                                       |
+| :------ | :-------------------------------- | :------------------ | :-------------------------------- | :-------------------------------------------------------------------- |
+| `GET`   | `/health`                         | **NEW**             | Public                            | None (for uptime monitors)                                            |
+| `GET`   | `/debug/webhook-status`           | **NEW**             | Public (Diagnostic)               | None                                                                  |
+| `GET`   | `/api/test-email/film-check`      | **NEW**             | Public (Diagnostic)               | `apiLimiter`                                                          |
+| `GET`   | `/api/auth/verify`                | **UPDATED**         | Public (Magic Link JWT)           | `apiLimiter`                                                          |
+| `POST`  | `/api/auth/resend-magic-link`     | **NEW**             | Public                            | `apiLimiter`, `resendMagicLinkLimiter`, `resendMagicLinkEmailLimiter` |
+| `POST`  | `/api/auth/logout`                | **NEW**             | Public (Reads cookie/Bearer)      | `apiLimiter`                                                          |
+| `POST`  | `/api/auth/admin/login`           | **UPDATED**         | Public                            | `apiLimiter`, `adminLoginLimiter`                                     |
+| `POST`  | `/api/auth/admin/forgot-password` | **UPDATED**         | Public                            | `apiLimiter`, `emailLimiter`                                          |
+| `POST`  | `/api/auth/admin/verify-otp`      | **UPDATED**         | Public                            | `apiLimiter`, `otpLimiter`                                            |
+| `POST`  | `/api/auth/admin/reset-password`  | **UPDATED**         | Bearer (`reset_token`)            | `apiLimiter`, `otpLimiter`                                            |
+| `POST`  | `/api/auth/admin/staff`           | **UPDATED**         | `Super_Admin`                     | `apiLimiter`                                                          |
+| `GET`   | `/api/films`                      | **UPDATED**         | Public                            | `apiLimiter`                                                          |
+| `GET`   | `/api/films/now-showing`          | **UPDATED**         | Public                            | `apiLimiter`                                                          |
+| `GET`   | `/api/films/:id`                  | **UPDATED**         | Public                            | `apiLimiter`                                                          |
+| `GET`   | `/api/tickets/price-breakdown`    | **NEW**             | Public                            | `apiLimiter`                                                          |
+| `POST`  | `/api/tickets/initiate`           | **UPDATED**         | Public                            | `apiLimiter`                                                          |
+| `POST`  | `/api/playback/authorize`         | **UPDATED**         | Cookie (`token`) or `inviteToken` | `apiLimiter`                                                          |
+| `GET`   | `/api/parties/quick-messages`     | **EXISTING**        | Public                            | `apiLimiter`                                                          |
+| `GET`   | `/api/parties/:partyId/sync`      | **EXISTING**        | Public                            | `apiLimiter`                                                          |
+| `POST`  | `/api/admin/films`                | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `PUT`   | `/api/admin/films/:id`            | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/admin/users`                | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/admin/users/export`         | **NEW**             | `Operations_Admin`                | `apiLimiter`                                                          |
+| `PATCH` | `/api/admin/users/:id/status`     | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `PATCH` | `/api/admin/users/:id/role`       | **UPDATED**         | `Super_Admin`                     | `apiLimiter`                                                          |
+| `GET`   | `/api/admin/tickets`              | **NEW**             | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/admin/tickets/export`       | **NEW**             | `Operations_Admin`                | `apiLimiter`                                                          |
+| `POST`  | `/api/admin/tickets/:id/resend`   | **NEW**             | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/analytics/films/:id`        | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/analytics/platform`         | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `GET`   | `/api/analytics/financials`       | **UPDATED**         | `Operations_Admin`                | `apiLimiter`                                                          |
+| `POST`  | `/api/waitlist`                   | **NEW**             | Public                            | `apiLimiter`                                                          |
+| `POST`  | `/api/webhooks`                   | **UPDATED**         | Public (Server-Verified)          | `webhookLimiter`, `webhookReferenceLimiter`                           |
+| `POST`  | `src/routes/contact.js` (`/`)     | **NEW (Unmounted)** | Public                            | `contactFormLimiter`                                                  |
 
 ---
 
 ### 3.1 System & Diagnostics
 
 #### `GET /health` — **[NEW]**
+
 - **File:** `server.js`
 - **Description:** Unthrottled health check endpoint for load balancers and uptime monitors. Verifies MongoDB connection state (`readyState === 1`) and pings Redis (`PING -> PONG`).
 - **Responses:**
@@ -150,10 +156,12 @@ This version of the backend introduces major improvements across security, payme
     ```
 
 #### `GET /debug/webhook-status` — **[NEW]**
+
 - **File:** `server.js`
 - **Description:** Temporary diagnostic endpoint returning the last webhook error/payload status, last email delivery error, environment configuration flags, and the 3 most recent tickets.
 
 #### `GET /api/test-email/film-check` — **[NEW]**
+
 - **File:** `src/routes/test-email.js`
 - **Description:** Diagnostic endpoint returning the most recently created film's `title`, `streamId`, `trailerId`, and booleans indicating whether `CLOUDFLARE_KEY_ID` and `CLOUDFLARE_PRIVATE_KEY` are configured.
 
@@ -164,6 +172,7 @@ This version of the backend introduces major improvements across security, payme
 **Files:** `src/routes/auth.js`, `src/controllers/authController.js`
 
 #### `GET /api/auth/verify?token=<magic_link_jwt>` — **[UPDATED]**
+
 - **Description:** Verifies a viewer's magic link JWT from their ticket receipt email, upserts the `User`, links all unclaimed tickets for that email, and sets the `httpOnly` `token` cookie until `premiereEnd`.
 - **What Changed:**
   - Checks `redisClient.get('magiclink:' + decoded.jti)` when `jti` is present on the token (`401 This link has expired.` if missing).
@@ -182,6 +191,7 @@ This version of the backend introduces major improvements across security, payme
   ```
 
 #### `POST /api/auth/resend-magic-link` — **[NEW]**
+
 - **Rate Limiters:** `resendMagicLinkLimiter` (3/hr per IP) + `resendMagicLinkEmailLimiter` (3/hr per IP+email).
 - **Description:** Self-service recovery endpoint for buyers who paid for a ticket on an active premiere but did not receive their email.
 - **Request Body:**
@@ -199,15 +209,18 @@ This version of the backend introduces major improvements across security, payme
   - `404 Not Found`: Film or paid ticket not found.
 
 #### `POST /api/auth/logout` — **[NEW]**
+
 - **Description:** Ends the caller's session by incrementing `user.sessionVersion` in MongoDB (if a valid token is present in cookies or `Authorization` header) and clearing the `httpOnly` `token` cookie.
 - **Response (`200 OK`):** `{ "message": "Logged out successfully." }`
 
 #### `POST /api/auth/admin/login` — **[UPDATED]**
+
 - **Rate Limiter:** `adminLoginLimiter` (5 attempts / 15 min).
 - **Request Body:** `{ "email": "admin@watchpremia.com", "password": "..." }`
 - **What Changed:** Normalizes email via `normalizeEmail()` and includes `sessionVersion: admin.sessionVersion` in the 24h admin JWT. If `admin.requiresPasswordChange === true`, still returns `{ message, requiresPasswordChange: true, resetToken }` (10-minute `reset_token`) without setting a session cookie.
 
 #### `POST /api/auth/admin/forgot-password` — **[UPDATED]**
+
 - **Rate Limiter:** `emailLimiter` (3 requests / hour).
 - **Request Body:** `{ "email": "admin@watchpremia.com" }`
 - **What Changed:**
@@ -216,6 +229,7 @@ This version of the backend introduces major improvements across security, payme
   - Resets the Redis failed-attempt counter `otp_attempts:<admin._id>`.
 
 #### `POST /api/auth/admin/verify-otp` — **[UPDATED]**
+
 - **Rate Limiter:** `otpLimiter` (5 attempts / 15 min).
 - **Request Body:** `{ "email": "admin@watchpremia.com", "otp": "123456" }`
 - **What Changed:**
@@ -223,6 +237,7 @@ This version of the backend introduces major improvements across security, payme
   - Tracks failed attempts per admin account in Redis (`otp_attempts:<admin._id>`, 15m TTL). After **5 failed attempts**, invalidates `admin.resetOtp` and `admin.otpExpiresAt` and returns `400 { "error": "Too many incorrect codes. This code has been cancelled — request a new one." }`.
 
 #### `POST /api/auth/admin/reset-password` — **[UPDATED]**
+
 - **Rate Limiter:** `otpLimiter` (5 attempts / 15 min — **newly added to this route**).
 - **Headers:** `Authorization: Bearer <resetToken>`
 - **Request Body:** `{ "newPassword": "newSecurePassword123" }`
@@ -231,6 +246,7 @@ This version of the backend introduces major improvements across security, payme
   - Clears `otp_attempts:<admin._id>` in Redis on success.
 
 #### `POST /api/auth/admin/staff` — **[UPDATED]**
+
 - **Auth:** `authenticate`, `requireRole('Super_Admin')`
 - **Request Body:** `{ "fullName": "...", "email": "...", "role": "Operations_Admin" }`
 - **What Changed:** Normalizes `email` via `normalizeEmail()` before checking uniqueness and creating the admin account.
@@ -242,6 +258,7 @@ This version of the backend introduces major improvements across security, payme
 **Files:** `src/routes/films.js`, `src/controllers/filmController.js`
 
 #### `GET /api/films` — **[UPDATED]**
+
 - **Description:** Lists all films (`upcoming`, `live`, `ended`) sorted by `premiereStart` ascending, excluding `streamingProviderVideoId`.
 - **What Changed:** Detects the caller's currency (`NGN` or `USD`) via `detectUserCountry(req)` and includes `detectedCurrency` both on the response envelope and on each film object.
 - **Response (`200 OK`):**
@@ -260,12 +277,14 @@ This version of the backend introduces major improvements across security, payme
   ```
 
 #### `GET /api/films/now-showing` — **[UPDATED]**
+
 - **Description:** Returns the currently active premiere (`premiereStart <= now < premiereEnd`, `isActive: true`).
 - **What Changed:**
   - Filters by `premiereStatus: { $in: ['live', 'upcoming'] }` and sorts by `.sort({ createdAt: -1 })`.
   - Attaches `detectedCurrency` to both the top-level response and the `film` object.
 
 #### `GET /api/films/:id` — **[UPDATED]**
+
 - **Description:** Fetches details for a single film by ObjectId.
 - **What Changed:** Attaches `detectedCurrency` to both the top-level response and the `film` object.
 
@@ -276,6 +295,7 @@ This version of the backend introduces major improvements across security, payme
 **Files:** `src/routes/tickets.js`, `src/controllers/ticketController.js`
 
 #### `GET /api/tickets/price-breakdown` — **[NEW]**
+
 - **Query Params:** `?filmId=<id>&ticketType=<single|bundle_2|bundle_4>&currency=<NGN|USD>`
 - **Description:** Returns the VAT-exclusive base price, 7.5% VAT amount, and gross total for a given film, ticket type, and currency.
 - **Responses:**
@@ -292,6 +312,7 @@ This version of the backend introduces major improvements across security, payme
   - `404 Not Found`: `{ "error": "Film not found." }`
 
 #### `POST /api/tickets/initiate` — **[UPDATED]**
+
 - **Description:** Initiates a ticket purchase via TransactPay (`/payment/create` with RSA-encrypted payload).
 - **Request Body:**
   ```json
@@ -328,6 +349,7 @@ This version of the backend introduces major improvements across security, payme
 **Files:** `src/routes/playback.js`, `src/controllers/playbackController.js`
 
 #### `POST /api/playback/authorize` — **[UPDATED]**
+
 - **Description:** Omni-endpoint that authorizes stream playback for a ticket holder (via `ticketId` + `token` cookie) or a watch party guest (via `inviteToken`), optionally creates a watch party and dispatches guest invites, locks the session to a single `deviceId` in Redis, and mints a Cloudflare Stream RS256 playback token plus a Watch Party `socketToken`.
 - **Request Body:**
   ```json
@@ -366,10 +388,12 @@ This version of the backend introduces major improvements across security, payme
 **Files:** `src/routes/parties.js`, `src/controllers/partyController.js`
 
 #### `GET /api/parties/quick-messages` — **[EXISTING]**
+
 - **Description:** Returns the predefined quick-chat messages (`ALLOWED_QUICK_MESSAGES`) and emoji reactions (`ALLOWED_REACTIONS`).
 - **Response (`200 OK`):** `{ "messages": [...], "reactions": [...] }`
 
 #### `GET /api/parties/:partyId/sync` — **[EXISTING]**
+
 - **Description:** Reads `party:${partyId}:time` from Redis to give late joiners the host's current playback timestamp in seconds.
 - **Response (`200 OK`):** `{ "timestamp": 742.5 }`
 
@@ -378,18 +402,21 @@ This version of the backend introduces major improvements across security, payme
 ### 3.7 Admin Portal (`/api/admin`)
 
 **Files:** `src/routes/admin.js`, `src/controllers/adminController.js`, `src/controllers/filmController.js`  
-*(All routes require `authenticate` middleware + `requireRole(...)`)*
+_(All routes require `authenticate` middleware + `requireRole(...)`)_
 
 #### `POST /api/admin/films` — **[UPDATED]** (`Operations_Admin`+)
+
 - **Content-Type:** `multipart/form-data` (`thumbnail` file upload via Cloudinary or `thumbnailUrl` text field).
 - **What Changed:** Parses `premiereStart` and `premiereEnd` through `normalizePremiereWindow()` so offset-less datetimes are interpreted as Lagos time (`+01:00`). Requires `duration >= 1`.
 
 #### `PUT /api/admin/films/:id` — **[UPDATED]** (`Operations_Admin`+)
+
 - **What Changed:**
   - Normalizes `premiereStart` and `premiereEnd` via `normalizePremiereWindow()`.
   - Replaced `Film.findByIdAndUpdate` with `Film.findById` → `film.set(req.body)` → `await film.save()` so the `Film` model's `pre('save')` 48–72h duration and schedule overlap checks always execute on edits.
 
 #### `GET /api/admin/users` — **[UPDATED]** (`Operations_Admin`+)
+
 - **Query Params:** `?page=1&limit=25&query=<search_email>`
 - **What Changed:**
   - Added server-side pagination (`page` defaults to `1`; `limit` defaults to `25`, max `100`) and regex-escaped case-insensitive email search (`query`).
@@ -406,9 +433,11 @@ This version of the backend introduces major improvements across security, payme
   ```
 
 #### `GET /api/admin/users/export` — **[NEW]** (`Operations_Admin`+)
+
 - **Description:** Downloads a CSV export (`premia-users-export-YYYY-MM-DD.csv`) of all users with fields `name, email, createdAt, role, suspended`.
 
 #### `PATCH /api/admin/users/:id/status` — **[UPDATED]** (`Operations_Admin`+)
+
 - **Request Body:** `{ "suspended": true }`
 - **What Changed:**
   - Enforces `authorizeTargeting()`: blocks invalid ObjectIds (`400`), blocks self-suspension (`403`), and blocks acting on a user at or above the caller's DB role (`403`).
@@ -416,12 +445,14 @@ This version of the backend introduces major improvements across security, payme
   - Applies `SAFE_USER_FIELDS` projection on the returned user.
 
 #### `PATCH /api/admin/users/:id/role` — **[UPDATED]** (`Super_Admin`)
+
 - **Request Body:** `{ "role": "Operations_Admin" }`
 - **What Changed:**
   - Reads valid roles directly from `User.schema.path('role').enumValues` (`['user', 'Operations_Admin', 'Super_Admin']`) instead of the old mismatched `['user', 'admin', 'super_admin']` array.
   - Enforces `authorizeTargeting()`, blocks granting a role at or above the actor's own rank (`403`), and blocks demoting the last active `Super_Admin` (`409`).
 
 #### `GET /api/admin/tickets` — **[NEW]** (`Operations_Admin`+)
+
 - **Query Params:** `?page=1&limit=50&search=<buyerEmail_or_paymentRef>`
 - **Description:** Returns a paginated list of tickets populated with `filmId` (`title`), sorted newest first.
 - **Response (`200 OK`):**
@@ -435,10 +466,12 @@ This version of the backend introduces major improvements across security, payme
   ```
 
 #### `GET /api/admin/tickets/export` — **[NEW]** (`Operations_Admin`+)
+
 - **Query Params:** `?filmId=<optional_film_id>`
 - **Description:** Downloads a CSV export (`premia-tickets-export-YYYY-MM-DD.csv`) of tickets (optionally filtered by `filmId`) with columns `filmTitle, premiereDate, ticketType, vatAmount, grossAmount, currency, purchaseDate, paymentReference`.
 
 #### `POST /api/admin/tickets/:id/resend` — **[NEW]** (`Operations_Admin`+)
+
 - **Request Body:** `{ "newEmail": "optional-corrected-email@example.com" }`
 - **Description:** Optionally updates `ticket.buyerEmail` (normalized), mints a new magic link JWT with a Redis `jti`, resends the ticket receipt email, and updates `ticket.emailDeliveryFailed`.
 
@@ -447,11 +480,12 @@ This version of the backend introduces major improvements across security, payme
 ### 3.8 Analytics & Financials (`/api/analytics`)
 
 **Files:** `src/routes/analytics.js`, `src/controllers/analyticsController.js`  
-*(All routes require `authenticate` + `requireRole('Operations_Admin')`)*
+_(All routes require `authenticate` + `requireRole('Operations_Admin')`)_
 
 All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid', status: { $nin: ['refund_due', 'refunded'] } }` and separate monetary totals by currency (`NGN` and `USD`).
 
 #### `GET /api/analytics/financials?filmId=<optional_id>` — **[UPDATED]**
+
 - **Response (`200 OK`):**
   ```json
   {
@@ -484,6 +518,7 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
   ```
 
 #### `GET /api/analytics/films/:id` — **[UPDATED]**
+
 - **Response (`200 OK`):**
   ```json
   {
@@ -491,14 +526,33 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
     "ngTickets": 3,
     "intTickets": 2,
     "byCurrency": [
-      { "currency": "NGN", "tickets": 3, "grossRevenue": 16125, "processingFees": 0, "vatCollected": 1125, "netRevenue": 15000, "producerShare": 9000, "platformShare": 6000 },
-      { "currency": "USD", "tickets": 2, "grossRevenue": 10.76, "processingFees": 0, "vatCollected": 0.76, "netRevenue": 10, "producerShare": 6, "platformShare": 4 }
+      {
+        "currency": "NGN",
+        "tickets": 3,
+        "grossRevenue": 16125,
+        "processingFees": 0,
+        "vatCollected": 1125,
+        "netRevenue": 15000,
+        "producerShare": 9000,
+        "platformShare": 6000
+      },
+      {
+        "currency": "USD",
+        "tickets": 2,
+        "grossRevenue": 10.76,
+        "processingFees": 0,
+        "vatCollected": 0.76,
+        "netRevenue": 10,
+        "producerShare": 6,
+        "platformShare": 4
+      }
     ],
     "watchPartyCount": 1
   }
   ```
 
 #### `GET /api/analytics/platform` — **[UPDATED]**
+
 - **What Changed:** Returns `stats.revenueByCurrency` instead of a mixed `grossRevenue` sum, and calculates `activeViewers` from Redis `playback_session:*` keys (counting both solo viewers and watch party guests).
 - **Response (`200 OK`):**
   ```json
@@ -528,6 +582,7 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
 **Files:** `src/routes/waitlist.js`, `src/controllers/waitlistController.js`
 
 #### `POST /api/waitlist` — **[NEW]**
+
 - **Description:** Captures leads from the homepage empty state between premieres. Accepts either an email address or a phone number (E.164 format, 7–15 digits).
 - **Request Body:** `{ "email": "fan@example.com" }` or `{ "phone": "+2348012345678" }`
 - **Responses:**
@@ -542,6 +597,7 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
 **Files:** `src/routes/webhooks.js`, `src/controllers/webhookController.js`
 
 #### `POST /api/webhooks` — **[UPDATED]**
+
 - **Rate Limiters:** `webhookLimiter` (60/min per IP) + `webhookReferenceLimiter` (5/min per IP + `orderReference`).
 - **Processing Pipeline:**
   1. Ignores non-successful events (`req.body?.status !== 'success' || data?.status !== 'Successful'`) with `200 OK`.
@@ -569,40 +625,42 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
 **File:** `src/sockets/watchParty.js`
 
 ### Connection & Authentication
+
 - Clients connect using the `socketToken` returned by `POST /api/playback/authorize`:
   ```js
   const socket = io(BACKEND_URL, {
     auth: { token: socketToken },
-    withCredentials: true
+    withCredentials: true,
   });
   ```
 - Cookie-based socket authentication has been removed because cross-origin `SameSite=Lax` cookies are dropped during WebSocket handshakes.
 
 ### Client → Server Events
-| Event | Payload | Sender | Behavior |
-| :--- | :--- | :--- | :--- |
-| `joinParty` | `{ partyId }` | Host / Guest | Verifies party is `active` and `party.ticketId === socket.ticketId`. Adds `String(socket.userId)` to `participants`, cancels any pending Redis host teardown if `socket.isHost`, and emits `syncTimestamp` with the current Redis time. |
-| `videoAction` | `{ action, timestamp }` | Host only | Validates `timestamp > 0`, saves `party:${partyId}:time` in Redis (12h TTL) and `hostTimestamp` in MongoDB, and broadcasts `syncVideo` to the room. |
-| `timeUpdate` | `{ timestamp }` | Host only | Validates `timestamp > 0`, updates `party:${partyId}:time` in Redis, and broadcasts `syncTimestamp` to the room. |
-| `sendQuickMessage` | `{ text }` | Host / Guest | Validates `text` is in `ALLOWED_QUICK_MESSAGES`, enforces rate limit (**max 5 per 10s per socket**), and broadcasts `receiveQuickMessage` to *other* members in the room (`socket.to(partyId)`). |
-| `sendReaction` | `{ emoji }` | Host / Guest | Validates `emoji` is in `ALLOWED_REACTIONS`, enforces rate limit (**max 5 per 10s per socket**), and broadcasts `receiveReaction` to *other* members in the room (`socket.to(partyId)`). |
-| `disconnect` | *(none)* | Host / Guest | Removes `String(socket.userId)` from `WatchParty.participants` via `$pull`. If `socket.isHost`, schedules a 30-second teardown deadline in Redis (`party_teardown:<partyId>`). |
 
-*(Note: The legacy `hostReconnect` client event and `cancelHostTimer` cross-server event were removed; re-emitting `joinParty` on reconnect now automatically cancels the Redis teardown key across all instances.)*
+| Event              | Payload                 | Sender       | Behavior                                                                                                                                                                                                                                |
+| :----------------- | :---------------------- | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `joinParty`        | `{ partyId }`           | Host / Guest | Verifies party is `active` and `party.ticketId === socket.ticketId`. Adds `String(socket.userId)` to `participants`, cancels any pending Redis host teardown if `socket.isHost`, and emits `syncTimestamp` with the current Redis time. |
+| `videoAction`      | `{ action, timestamp }` | Host only    | Validates `timestamp > 0`, saves `party:${partyId}:time` in Redis (12h TTL) and `hostTimestamp` in MongoDB, and broadcasts `syncVideo` to the room.                                                                                     |
+| `timeUpdate`       | `{ timestamp }`         | Host only    | Validates `timestamp > 0`, updates `party:${partyId}:time` in Redis, and broadcasts `syncTimestamp` to the room.                                                                                                                        |
+| `sendQuickMessage` | `{ text }`              | Host / Guest | Validates `text` is in `ALLOWED_QUICK_MESSAGES`, enforces rate limit (**max 5 per 10s per socket**), and broadcasts `receiveQuickMessage` to _other_ members in the room (`socket.to(partyId)`).                                        |
+| `sendReaction`     | `{ emoji }`             | Host / Guest | Validates `emoji` is in `ALLOWED_REACTIONS`, enforces rate limit (**max 5 per 10s per socket**), and broadcasts `receiveReaction` to _other_ members in the room (`socket.to(partyId)`).                                                |
+| `disconnect`       | _(none)_                | Host / Guest | Removes `String(socket.userId)` from `WatchParty.participants` via `$pull`. If `socket.isHost`, schedules a 30-second teardown deadline in Redis (`party_teardown:<partyId>`).                                                          |
+
+_(Note: The legacy `hostReconnect` client event and `cancelHostTimer` cross-server event were removed; re-emitting `joinParty` on reconnect now automatically cancels the Redis teardown key across all instances.)_
 
 ---
 
 ## 5. Database Models & Schema Changes
 
-| Model (`src/models/`) | Status | Key Changes |
-| :--- | :--- | :--- |
-| `Film.js` | **UPDATED** | • Removed `unique: true, sparse: true` from `streamingProviderVideoId` (`server.js` runs `Film.syncIndexes()` on boot).<br>• Made `duration` required with `min: 1`.<br>• Updated `pre('save')` hook to run on `this.isNew`, validate finite timestamps, and ignore `ended` films (`premiereStatus: { $ne: 'ended' }`) when checking for overlapping premieres. |
-| `Ticket.js` | **UPDATED** | • Added `'refund_due'` and `'refunded'` to `status` enum (`['active', 'used', 'revoked', 'refund_due', 'refunded']`).<br>• Added `emailDeliveryFailed: { type: Boolean, default: false }`. |
-| `User.js` | **UPDATED** | • Added `lowercase: true` and `pre('save')` email normalization via `normalizeEmail()`.<br>• Added case-insensitive unique index `email_1_ci` with `{ locale: 'en', strength: 2 }` collation.<br>• Added `sessionVersion: { type: Number, default: 0 }`. |
-| `WatchParty.js` | **UPDATED** | • Added compound index `{ ticketId: 1, status: 1 }` and single-field index `{ status: 1 }`. |
-| `AuthToken.js` | **REMOVED** | • Deleted. Magic links now use JWT `jti` claims stored in Redis (`magiclink:<jti>`). |
-| `Waitlist.js` | **NEW** | • Stores lead capture entries with `email` (unique, sparse, lowercase) and `phone` (unique, sparse). |
-| `ContactSubmission.js` | **NEW** | • Stores support form inquiries (`name`, `email`, `category`, `subject`, `ticketRef`, `message`, `attachmentUrl`, `ipAddress`, `status`). |
+| Model (`src/models/`)  | Status      | Key Changes                                                                                                                                                                                                                                                                                                                                                     |
+| :--------------------- | :---------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Film.js`              | **UPDATED** | • Removed `unique: true, sparse: true` from `streamingProviderVideoId` (`server.js` runs `Film.syncIndexes()` on boot).<br>• Made `duration` required with `min: 1`.<br>• Updated `pre('save')` hook to run on `this.isNew`, validate finite timestamps, and ignore `ended` films (`premiereStatus: { $ne: 'ended' }`) when checking for overlapping premieres. |
+| `Ticket.js`            | **UPDATED** | • Added `'refund_due'` and `'refunded'` to `status` enum (`['active', 'used', 'revoked', 'refund_due', 'refunded']`).<br>• Added `emailDeliveryFailed: { type: Boolean, default: false }`.                                                                                                                                                                      |
+| `User.js`              | **UPDATED** | • Added `lowercase: true` and `pre('save')` email normalization via `normalizeEmail()`.<br>• Added case-insensitive unique index `email_1_ci` with `{ locale: 'en', strength: 2 }` collation.<br>• Added `sessionVersion: { type: Number, default: 0 }`.                                                                                                        |
+| `WatchParty.js`        | **UPDATED** | • Added compound index `{ ticketId: 1, status: 1 }` and single-field index `{ status: 1 }`.                                                                                                                                                                                                                                                                     |
+| `AuthToken.js`         | **REMOVED** | • Deleted. Magic links now use JWT `jti` claims stored in Redis (`magiclink:<jti>`).                                                                                                                                                                                                                                                                            |
+| `Waitlist.js`          | **NEW**     | • Stores lead capture entries with `email` (unique, sparse, lowercase) and `phone` (unique, sparse).                                                                                                                                                                                                                                                            |
+| `ContactSubmission.js` | **NEW**     | • Stores support form inquiries (`name`, `email`, `category`, `subject`, `ticketRef`, `message`, `attachmentUrl`, `ipAddress`, `status`).                                                                                                                                                                                                                       |
 
 ---
 
@@ -637,36 +695,36 @@ All analytics aggregations now filter by `REVENUE_MATCH = { paymentStatus: 'paid
 
 Comments in the codebase reference audit IDs (`C*`, `H*`, `M*`). Use this table to look up the context of any audit tag:
 
-| ID | Summary | Primary Files |
-| :--- | :--- | :--- |
-| **C1** | Prevent `invited_guest` JWT from bypassing ticket ownership check; verify webhooks server-to-server | `src/controllers/playbackController.js`, `src/controllers/webhookController.js`, `src/middleware/authenticate.js` |
-| **C2** | Key rate limiters by real client IP via signed proxy header; authenticate sockets via `socketToken` | `src/middleware/rateLimiter.js`, `src/sockets/watchParty.js` |
-| **C3** | Apply 7.5% VAT consistently across checkout, webhook verification, `Ticket.vat`, and analytics | `src/controllers/ticketController.js`, `src/controllers/webhookController.js`, `src/controllers/analyticsController.js` |
-| **C4** | Block `reset_token` from acting as a session token; lock dashboard when `requiresPasswordChange` is true | `src/middleware/authenticate.js`, `src/middleware/rbac.js` |
-| **C5** | Stamp `startedAt` once per playback session; strip password/OTP hashes from admin user responses | `src/controllers/playbackController.js`, `src/controllers/adminController.js` |
-| **C6** | Parse offset-less premiere datetimes as Lagos time (`+01:00`) rather than server host timezone | `src/controllers/filmController.js`, `src/models/Film.js` |
-| **C8** | Flag failed receipt emails (`emailDeliveryFailed`) and provide magic link resend endpoints | `src/controllers/webhookController.js`, `src/controllers/authController.js`, `src/models/Ticket.js` |
-| **H1** | Block non-NG buyers from purchasing in `NGN`; stop cron job from mutating `Film.isActive` | `src/controllers/ticketController.js`, `src/services/filmStatusJob.js` |
-| **H3** | Run `Film` `pre('save')` hooks on `updateFilm`; remove `developerDetails` from 500 payment responses | `src/controllers/filmController.js`, `src/controllers/ticketController.js` |
-| **H4** | Read valid user roles dynamically from `User.schema.path('role').enumValues` | `src/controllers/adminController.js` |
-| **H6** | Enforce `ROLE_HIERARCHY` and prevent stranding the platform with zero active `Super_Admin`s | `src/controllers/adminController.js` |
-| **H7** | Paginate and search admin user list; add `POST /api/auth/logout` to clear `httpOnly` cookie | `src/controllers/adminController.js`, `src/controllers/authController.js` |
-| **H8** | Group financial analytics by currency (`NGN` vs `USD`) instead of summing mixed currencies | `src/controllers/analyticsController.js` |
-| **H9** | Require `APP_URL` and strip `localhost` CORS in production; normalize all emails to lowercase | `server.js`, `src/models/User.js`, `src/utils/email.js` |
-| **H11** | Return `filmId` on `/api/auth/verify` and include `filmId` in watch party invite URLs | `src/controllers/authController.js`, `src/controllers/playbackController.js` |
-| **H14** | Implement `POST /api/waitlist` lead capture endpoint and `Waitlist` model | `src/controllers/waitlistController.js`, `src/models/Waitlist.js` |
-| **H20** | Automatically refund webhook payments that settle after `premiereEnd` (`refund_due` → `refunded`) | `src/controllers/webhookController.js`, `src/utils/transactpayRefund.js`, `src/models/Ticket.js` |
-| **H21** | Require `Film.duration >= 1` and refuse to guess a 2-hour fallback playback window | `src/models/Film.js`, `src/controllers/playbackController.js` |
-| **M9** | Store watch party host disconnect teardown deadlines in Redis (`party_teardown:*`) | `src/sockets/watchParty.js` |
-| **M10** | Remove disconnecting participants from `WatchParty.participants` via `$pull` | `src/sockets/watchParty.js` |
-| **M11** | Rate-limit `sendQuickMessage` and `sendReaction` events per socket (5 per 10s) | `src/sockets/watchParty.js` |
-| **M12** | Validate `timestamp` is a positive finite number in `videoAction` and `timeUpdate` | `src/sockets/watchParty.js` |
-| **M13** | Add `{ ticketId: 1, status: 1 }` and `{ status: 1 }` indexes to `WatchParty` | `src/models/WatchParty.js` |
-| **M14** | Remove 60-second lookahead in `filmStatusJob` so `live` status matches `premiereStart` | `src/services/filmStatusJob.js` |
-| **M15** | Fail fast (`process.exit(1)`) on Redis boot failure and expose `GET /health` | `src/config/redis.js`, `server.js` |
-| **M16** | Floor Redis session TTL and Cloudflare token duration at 1 second (`Math.max(..., 1)`) | `src/controllers/playbackController.js` |
-| **M17** | Enforce `MIN_PASSWORD_LENGTH = 8` and rate-limit `/api/auth/admin/reset-password` | `src/controllers/authController.js`, `src/routes/auth.js` |
-| **M18** | Use 6-digit `crypto.randomInt` OTPs and cap failed OTP attempts at 5 per account in Redis | `src/controllers/authController.js` |
+| ID      | Summary                                                                                                  | Primary Files                                                                                                           |
+| :------ | :------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| **C1**  | Prevent `invited_guest` JWT from bypassing ticket ownership check; verify webhooks server-to-server      | `src/controllers/playbackController.js`, `src/controllers/webhookController.js`, `src/middleware/authenticate.js`       |
+| **C2**  | Key rate limiters by real client IP via signed proxy header; authenticate sockets via `socketToken`      | `src/middleware/rateLimiter.js`, `src/sockets/watchParty.js`                                                            |
+| **C3**  | Apply 7.5% VAT consistently across checkout, webhook verification, `Ticket.vat`, and analytics           | `src/controllers/ticketController.js`, `src/controllers/webhookController.js`, `src/controllers/analyticsController.js` |
+| **C4**  | Block `reset_token` from acting as a session token; lock dashboard when `requiresPasswordChange` is true | `src/middleware/authenticate.js`, `src/middleware/rbac.js`                                                              |
+| **C5**  | Stamp `startedAt` once per playback session; strip password/OTP hashes from admin user responses         | `src/controllers/playbackController.js`, `src/controllers/adminController.js`                                           |
+| **C6**  | Parse offset-less premiere datetimes as Lagos time (`+01:00`) rather than server host timezone           | `src/controllers/filmController.js`, `src/models/Film.js`                                                               |
+| **C8**  | Flag failed receipt emails (`emailDeliveryFailed`) and provide magic link resend endpoints               | `src/controllers/webhookController.js`, `src/controllers/authController.js`, `src/models/Ticket.js`                     |
+| **H1**  | Block non-NG buyers from purchasing in `NGN`; stop cron job from mutating `Film.isActive`                | `src/controllers/ticketController.js`, `src/services/filmStatusJob.js`                                                  |
+| **H3**  | Run `Film` `pre('save')` hooks on `updateFilm`; remove `developerDetails` from 500 payment responses     | `src/controllers/filmController.js`, `src/controllers/ticketController.js`                                              |
+| **H4**  | Read valid user roles dynamically from `User.schema.path('role').enumValues`                             | `src/controllers/adminController.js`                                                                                    |
+| **H6**  | Enforce `ROLE_HIERARCHY` and prevent stranding the platform with zero active `Super_Admin`s              | `src/controllers/adminController.js`                                                                                    |
+| **H7**  | Paginate and search admin user list; add `POST /api/auth/logout` to clear `httpOnly` cookie              | `src/controllers/adminController.js`, `src/controllers/authController.js`                                               |
+| **H8**  | Group financial analytics by currency (`NGN` vs `USD`) instead of summing mixed currencies               | `src/controllers/analyticsController.js`                                                                                |
+| **H9**  | Require `APP_URL` and strip `localhost` CORS in production; normalize all emails to lowercase            | `server.js`, `src/models/User.js`, `src/utils/email.js`                                                                 |
+| **H11** | Return `filmId` on `/api/auth/verify` and include `filmId` in watch party invite URLs                    | `src/controllers/authController.js`, `src/controllers/playbackController.js`                                            |
+| **H14** | Implement `POST /api/waitlist` lead capture endpoint and `Waitlist` model                                | `src/controllers/waitlistController.js`, `src/models/Waitlist.js`                                                       |
+| **H20** | Automatically refund webhook payments that settle after `premiereEnd` (`refund_due` → `refunded`)        | `src/controllers/webhookController.js`, `src/utils/transactpayRefund.js`, `src/models/Ticket.js`                        |
+| **H21** | Require `Film.duration >= 1` and refuse to guess a 2-hour fallback playback window                       | `src/models/Film.js`, `src/controllers/playbackController.js`                                                           |
+| **M9**  | Store watch party host disconnect teardown deadlines in Redis (`party_teardown:*`)                       | `src/sockets/watchParty.js`                                                                                             |
+| **M10** | Remove disconnecting participants from `WatchParty.participants` via `$pull`                             | `src/sockets/watchParty.js`                                                                                             |
+| **M11** | Rate-limit `sendQuickMessage` and `sendReaction` events per socket (5 per 10s)                           | `src/sockets/watchParty.js`                                                                                             |
+| **M12** | Validate `timestamp` is a positive finite number in `videoAction` and `timeUpdate`                       | `src/sockets/watchParty.js`                                                                                             |
+| **M13** | Add `{ ticketId: 1, status: 1 }` and `{ status: 1 }` indexes to `WatchParty`                             | `src/models/WatchParty.js`                                                                                              |
+| **M14** | Remove 60-second lookahead in `filmStatusJob` so `live` status matches `premiereStart`                   | `src/services/filmStatusJob.js`                                                                                         |
+| **M15** | Fail fast (`process.exit(1)`) on Redis boot failure and expose `GET /health`                             | `src/config/redis.js`, `server.js`                                                                                      |
+| **M16** | Floor Redis session TTL and Cloudflare token duration at 1 second (`Math.max(..., 1)`)                   | `src/controllers/playbackController.js`                                                                                 |
+| **M17** | Enforce `MIN_PASSWORD_LENGTH = 8` and rate-limit `/api/auth/admin/reset-password`                        | `src/controllers/authController.js`, `src/routes/auth.js`                                                               |
+| **M18** | Use 6-digit `crypto.randomInt` OTPs and cap failed OTP attempts at 5 per account in Redis                | `src/controllers/authController.js`                                                                                     |
 
 ---
 
@@ -738,19 +796,19 @@ node test/watch-party-socket.test.js
 node test/webhook-verification.test.js
 ```
 
-| Test File | What It Verifies |
-| :--- | :--- |
-| `src/utils/geo.check.mjs` | IP extraction (`getClientIp`), GeoIP country/currency resolution, and fallback rules. |
-| `test/admin-auth.test.js` | `SESSION_ROLES` whitelist in `authenticate`, role checks in `requireRole`, and `SAFE_USER_FIELDS`. |
-| `test/admin-hierarchy.test.js` | `ROLE_HIERARCHY` enforcement, peer/self-action blocks, last-`Super_Admin` guard, and `listUsers` pagination/search. |
-| `test/admin-role.test.js` | Dynamic schema enum validation in `PATCH /api/admin/users/:id/role`. |
-| `test/analytics-currency.test.js` | Per-currency aggregation (`$group._id = '$currency'`) and `splitByCurrency` zero-filling. |
-| `test/email-normalization.test.js` | `normalizeEmail`, `User` lowercase setter, and case-insensitive `email_1_ci` index. |
-| `test/logout-cookie.test.js` | `POST /api/auth/logout` `Set-Cookie` eviction header attributes in dev and production. |
-| `test/playback-clock.test.js` | Single-stamp `startedAt` immutability, `duration + 45s` lockout, invalid duration handling, 1s minimum TTL, and refunded ticket blocking. |
-| `test/premiere-window.test.js` | Lagos (`+01:00`) naive datetime parsing and required `Film.duration >= 1` validation. |
-| `test/rate-limit-key.test.js` | `PREMIA_PROXY_KEY` verification, IPv6 `/56` grouping, spoofed header rejection, and 120/min per-visitor limit. |
-| `test/ticket-pricing.test.js` | 7.5% VAT calculation, 2-decimal rounding, `NGN` region lock, and error response sanitization. |
-| `test/waitlist-contact.test.js` | `buildWaitlistEntry` email/phone validation and `Waitlist` sparse unique indexes. |
-| `test/watch-party-socket.test.js` | `socketToken` handshake auth, room ticket ownership, Redis teardown sweeps, `$pull` on disconnect, and chat rate limiting. |
-| `test/webhook-verification.test.js` | `paymentMatchesFilm` fraud guard against underpayments and cross-currency mismatches. |
+| Test File                           | What It Verifies                                                                                                                          |
+| :---------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/utils/geo.check.mjs`           | IP extraction (`getClientIp`), GeoIP country/currency resolution, and fallback rules.                                                     |
+| `test/admin-auth.test.js`           | `SESSION_ROLES` whitelist in `authenticate`, role checks in `requireRole`, and `SAFE_USER_FIELDS`.                                        |
+| `test/admin-hierarchy.test.js`      | `ROLE_HIERARCHY` enforcement, peer/self-action blocks, last-`Super_Admin` guard, and `listUsers` pagination/search.                       |
+| `test/admin-role.test.js`           | Dynamic schema enum validation in `PATCH /api/admin/users/:id/role`.                                                                      |
+| `test/analytics-currency.test.js`   | Per-currency aggregation (`$group._id = '$currency'`) and `splitByCurrency` zero-filling.                                                 |
+| `test/email-normalization.test.js`  | `normalizeEmail`, `User` lowercase setter, and case-insensitive `email_1_ci` index.                                                       |
+| `test/logout-cookie.test.js`        | `POST /api/auth/logout` `Set-Cookie` eviction header attributes in dev and production.                                                    |
+| `test/playback-clock.test.js`       | Single-stamp `startedAt` immutability, `duration + 45s` lockout, invalid duration handling, 1s minimum TTL, and refunded ticket blocking. |
+| `test/premiere-window.test.js`      | Lagos (`+01:00`) naive datetime parsing and required `Film.duration >= 1` validation.                                                     |
+| `test/rate-limit-key.test.js`       | `PREMIA_PROXY_KEY` verification, IPv6 `/56` grouping, spoofed header rejection, and 120/min per-visitor limit.                            |
+| `test/ticket-pricing.test.js`       | 7.5% VAT calculation, 2-decimal rounding, `NGN` region lock, and error response sanitization.                                             |
+| `test/waitlist-contact.test.js`     | `buildWaitlistEntry` email/phone validation and `Waitlist` sparse unique indexes.                                                         |
+| `test/watch-party-socket.test.js`   | `socketToken` handshake auth, room ticket ownership, Redis teardown sweeps, `$pull` on disconnect, and chat rate limiting.                |
+| `test/webhook-verification.test.js` | `paymentMatchesFilm` fraud guard against underpayments and cross-currency mismatches.                                                     |

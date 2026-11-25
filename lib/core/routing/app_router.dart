@@ -69,8 +69,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: RoutePaths.player,
-        builder: (_, state) =>
-            PlayerScreen(title: state.extra is String ? state.extra! as String : 'Premiere'),
+        builder: (_, state) {
+          final extra = state.extra;
+          final title = extra is String
+              ? extra
+              : (extra is Film ? extra.title : 'Premiere');
+          return PlayerScreen(title: title);
+        },
       ),
       GoRoute(
         path: RoutePaths.watch,

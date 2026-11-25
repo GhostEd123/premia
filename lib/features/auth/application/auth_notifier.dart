@@ -77,6 +77,31 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
+  /// Establishes an authenticated guest watch-party session after
+  /// `POST /api/parties/join-lobby` succeeds.
+  void setGuestSession({
+    required String inviteToken,
+    required String partyId,
+    String? filmId,
+    String? accessToken,
+    String? guestName,
+  }) {
+    state = state.copyWith(
+      isLoading: false,
+      error: null,
+      magicLinkSession: MagicLinkSession(
+        userId: guestName ?? 'guest',
+        claimedTicketId: '',
+        ticketType: 'bundle_4',
+        filmId: filmId,
+        accessToken: accessToken,
+        isHost: false,
+        inviteToken: inviteToken,
+        partyId: partyId,
+      ),
+    );
+  }
+
   /// Self-service recovery: sends a fresh access link to buyer email.
   Future<void> resendMagicLink({
     required String email,

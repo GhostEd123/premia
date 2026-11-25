@@ -9,6 +9,178 @@ All notable changes to the Premia project will be documented in this file.
 
 ---
 
+## [26/11/26] - 2026-11-26
+
+### 1. Align Watch Party Playback Sync with Backend `videoAction` / `syncVideo` & `timeUpdate` / `syncTimestamp` Specification
+- **What Was Added / Modified:**
+  - `lib/features/parties/data/parties_repository_impl.dart`:
+    - Aligned host Socket.IO emissions with Section 4 of `PREMIA_BACKEND_CHANGES 2.md` (`src/sockets/watchParty.js`):
+      - Emits `videoAction` with `{'action': 'pause' | 'play' | 'seek', 'timestamp': safeTimestamp}` when the host pauses, plays/resumes, or rewinds/seeks (`timestamp > 0` enforced per audit `M12`).
+      - Emits `timeUpdate` with `{'timestamp': safeTimestamp}` on periodic host heartbeats while playing.
+      - Removed the `__PREMIA_SYNC__` marker over `sendQuickMessage` (because the backend rejects any `sendQuickMessage` not in `ALLOWED_QUICK_MESSAGES` and rate-limits `sendQuickMessage` to 5 per 10s per audit `M11`).
+    - Added Socket.IO listeners for:
+      - `syncVideo` (`{'action': 'pause' | 'play' | 'seek', 'timestamp': ...}` broadcast by the backend when the host emits `videoAction`).
+      - `syncTimestamp` (`{'timestamp': ...}` or number broadcast by the backend when the host emits `timeUpdate` or when `joinParty` completes).
+      - `partyEnded` / `hostDisconnected` (pauses/ends the guest stream when the host leaves).
+    - Removed the synthetic `partyStarted` -> `PartyPlaybackSync(elapsed, isPaused: false)` emission that was storing `currentTimeSeconds: 0` in `hostPlaybackSync` and causing the guest's `pollSync` / initial sync to repeatedly seek back to `0s` every 3 seconds (causing the 3-second loop).
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Eliminated the 3-second guest seek loop by ignoring `currentTimeSeconds <= 0`, increasing periodic `syncTimestamp` drift tolerance to `3000ms` (so HLS keyframe rounding doesn't re-trigger `seekTo` every 3s), while keeping a tight `600ms` snap on explicit `syncVideo` (`pause`, `play`, `seek`) actions.
+    - When the host confirms leaving the premiere (`_confirmExit`), broadcasts `videoAction: pause` and disconnects the host socket so guests immediately pause and the backend triggers its host teardown.
+- **Explanation:**
+  - Fixes the guest repeating the first 3 seconds and not following the host by switching to the exact backend Socket.IO event contract (`videoAction` -> `syncVideo` and `timeUpdate` -> `syncTimestamp`) and eliminating the `timestamp: 0` poll/seek loop.
+- **General Project Impact:**
+  - Ensures 100% compatibility with `src/sockets/watchParty.js` in `PREMIA_BACKEND_CHANGES 2.md` for pause, resume, rewind/seek, continuous time sync, and host exit.
+
+---
+
+## [25/11/26] - 2026-11-25
+
+### 1. Fix Guest Video Frozen Frame (Duplicate Player Instance) & Harden Host-to-Guest Pause/Seek Sync
+- **What Was Added / Modified:**
+  - `lib/features/parties/presentation/lobby_screen.dart` & `lib/core/routing/app_router.dart`:
+    - Guarded the `partyStartedEvent` listener in `LobbyScreen` with `ModalRoute.of(context)?.isCurrent` so when a guest is already on `PlayerScreen` waiting for the host, `LobbyScreen` does not push a duplicate `PlayerScreen` on top of the active `PlayerScreen` (which created two concurrent ExoPlayer instances decoding the same HLS stream and froze the video texture on a single frame while audio kept playing).
+    - Updated `app_router.dart` `/player` route builder to accept either `String` or `Film` in `state.extra`.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Added `_isStartingPlayback` re-entrancy guard and `await previousController.dispose()` before creating a new `VideoPlayerController`.
+    - Called `await controller.play()` before the initial `await controller.seekTo(...)` so Android ExoPlayer binds its video surface texture cleanly before seeking to the live offset.
+    - Added `_startGuestSyncPoller(effectivePartyId)` as a 3-second fallback poller (`GET /api/parties/:partyId/sync`) whenever Socket.IO sync heartbeats are delayed.
+  - `lib/features/parties/data/parties_repository_impl.dart`:
+    - Added `_connectingFuture` and `_pendingSocketFrames` queue so Socket.IO events (`joinParty`, `syncPlayback`, `pauseParty`, `resumeParty`, `sendQuickMessage`, `sendReaction`) emitted while the WebSocket handshake is still completing are queued and flushed immediately upon namespace connect (`40{"sid":...}`) instead of being dropped.
+    - Expanded `emitHostPlaybackState` to emit all common Socket.IO playback sync event names (`syncPlayback`, `playbackSync`, `updatePlayback`, `pauseParty`, `partyPause`, `playbackPause`, `pausePlayback`, `pause`, `resumeParty`, `partyResume`, `playbackResume`, `resumePlayback`, `play`, `resume`, `seekParty`, `seekPlayback`, `seek`) plus the encoded sync marker and implemented `getPartySyncState(partyId)` for `GET /api/parties/:partyId/sync`.
+- **Explanation:**
+  - Resolves the guest "audio playing with video frozen on one frame" issue caused by duplicate `PlayerScreen` instances/seek-before-play texture binding on Android, and ensures host pause/resume/time sync events are never dropped during socket connection setup.
+- **General Project Impact:**
+  - Guarantees a single hardware video decoder instance on the guest device and reliable pause/resume/time synchronization with the host.
+
+---
+
+### 2. Animated Top Toast Notification on Magic Link Invite Success in `HostPartyScreen`
+- **What Was Added / Modified:**
+  - `lib/features/parties/presentation/host_party_screen.dart`:
+    - Replaced bottom `SnackBar` notifications with an animated top-floating `_TopToastBanner` (`OverlayEntry`) that slides and fades in at the top of the screen below the status bar.
+    - Styled the magic link invite success toast with `AppColors.primary` (red) background, `Colors.black` text, a circular badge icon (`Icons.mark_email_read_rounded`), rounded `16px` pill corners, drop shadow, and tap-to-dismiss support.
+- **Explanation:**
+  - Moves magic link invite feedback to an appealing top toast banner so it is immediately visible at eye level above the form without being covered by the on-screen keyboard or bottom safe area.
+- **General Project Impact:**
+  - Enhances the visual polish and responsiveness of guest invitation actions on `HostPartyScreen`.
+
+---
+
+### 2. Fix Lobby Screen Back Button Navigation for Guests (`context.canPop()`)
+- **What Was Added / Modified:**
+  - `lib/features/parties/presentation/lobby_screen.dart`:
+    - Updated the `SliverAppBar` leading back button `onPressed` callback to check `context.canPop()` and fall back to `context.go(RoutePaths.marquee)` when the route stack has nothing to pop (e.g. when a guest enters the lobby via `context.go(RoutePaths.lobby)` from `EnterLinkScreen`).
+- **Explanation:**
+  - Prevents the `GoError: There is nothing to pop` exception when a guest taps the back button on `LobbyScreen` and navigates them cleanly back to `MarqueeScreen`.
+- **General Project Impact:**
+  - Ensures safe back navigation from `LobbyScreen` for both pushed host routes and top-level guest routes.
+
+---
+
+### 2. Real-Time Host-to-Guest Playback Time & Pause Sync + Bi-Directional Quick Messages & Reactions
+- **What Was Added / Modified:**
+  - `lib/features/parties/domain/watch_party.dart`:
+    - Added `PartyPlaybackSync` (`currentTimeSeconds`, `isPaused`, `receivedAt`) representing the host's live movie position and play/pause state.
+  - `lib/features/parties/domain/parties_repository.dart` & `lib/features/parties/data/parties_repository_impl.dart`:
+    - Updated `sendQuickMessage` to emit `{'partyId': partyId, 'message': text, 'text': text}` and `sendReaction` to emit `{'partyId': partyId, 'reaction': emoji, 'emoji': emoji}` so the backend Socket.IO room handler routes both host and guest messages/reactions across all payload key conventions.
+    - Updated `_extractString` in `PartiesRepositoryImpl` to inspect `['message', 'text', 'content', 'msg', 'quickMessage']` and `['reaction', 'emoji', 'icon', 'content']`, as well as nested `data`/`payload` maps or lists.
+    - Updated `connectWatchParty` to re-emit `joinParty` (`{'partyId': partyId}`) whenever re-invoked on an open socket, ensuring both host and guest remain joined to the party room upon entering `PlayerScreen`.
+    - Added `playbackSyncEvents` stream and `emitHostPlaybackState({required double currentTimeSeconds, required bool isPaused, String action})` which broadcasts dedicated Socket.IO sync events (`syncPlayback`, `pauseParty`, `resumeParty`, `seekParty`) AND a silent encoded sync marker (`__PREMIA_SYNC__:...`) over the room's `sendQuickMessage` relay channel so guests stay locked to the host's playback clock and pause state even if custom sync events aren't forwarded by the server.
+  - `lib/features/parties/application/watch_party_notifier.dart`:
+    - Subscribed to `playbackSyncEvents` to update `hostPlaybackSync` and `isPaused`.
+    - Added echo-suppression (`_lastLocallySentMessage` / `_lastLocallySentReaction` within 900ms) so if the server echoes a sender's message/reaction back to the whole room, the sender does not spawn duplicate floating items.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Compensated initial seek position for the network authorization + HLS manifest initialization latency (`setupLag`) so joining guests don't start several seconds behind the host.
+    - Connected Socket.IO in `_startPlayback` using fallback `partyState.party.partyId` and `partyState.party.socketToken` when `/api/playback/authorize` omits `partyId` or `socketToken`, and enabled `showChatAndReactions` whenever a watch party is active.
+    - Started a 2-second host playback heartbeat (`_startHostSyncBroadcaster`) plus immediate broadcasts on host pause, resume, and seek.
+    - Added `_applyHostPlaybackSync` on the guest side so whenever the host pauses, resumes, seeks, or drifts by >1.5s, the guest player immediately pauses, resumes, or seeks to match the host's exact movie position, and made the guest seek bar/transport controls follow the host ("Synced with Host" / "Paused by Host").
+- **Explanation:**
+  - Fixes guest messages/reactions not appearing on the host's screen and eliminates playback drift between host and guest by continuously synchronizing the guest's video player position and pause state to the host.
+- **General Project Impact:**
+  - Ensures all watch party participants watch the exact same frame together, stay paused when the host pauses, and see everyone's floating quick messages and reactions in real time.
+
+---
+
+### 2. Fix Unmounted `ref` Access on Guest Invite Link Verification in `EnterLinkScreen`
+- **What Was Added / Modified:**
+  - `lib/features/auth/presentation/enter_link_screen.dart`:
+    - Captured `authNotifier` (`ref.read(authNotifierProvider.notifier)`) and `watchPartyNotifier` (`ref.read(watchPartyNotifierProvider.notifier)`) synchronously before `await watchPartyNotifier.joinGuestLobby(inviteToken)` in `_submit()`, and guarded post-await UI updates with `if (mounted)`.
+    - Updated the `ref.listen(authNotifierProvider, ...)` redirect in `build()` to skip navigating to `RoutePaths.marquee` when `next.magicLinkSession?.isHost == false` (since guest sessions navigate directly to `RoutePaths.lobby`).
+    - Wired the `Verify` `AppButton`'s `isLoading` state to `auth.isLoading || isJoiningLobby`.
+- **Explanation:**
+  - Prevents the Riverpod `Bad state: Using "ref" when a widget is about to or has been unmounted is unsafe` exception when `joinGuestLobby` completes after an async gap, and ensures guest invite links navigate cleanly to `LobbyScreen` instead of being intercepted by the host marquee redirect listener.
+- **General Project Impact:**
+  - Guarantees safe async provider access and smooth guest entry into the watch party lobby.
+
+---
+
+### 2. Clear Hardcoded Guest List & Default Guest Passes to `1/2`
+- **What Was Added / Modified:**
+  - `lib/features/parties/domain/watch_party.dart`:
+    - Changed default `totalPasses` from `4` to `2` and default `status` to `'not_created'`, so `usedPasses / totalPasses` defaults to `1/2` when `guests` is empty.
+  - `lib/features/parties/data/parties_repository_impl.dart`:
+    - Updated `WatchPartyDto.toEntity` `fallbackTotalPasses` to `2`.
+  - `lib/features/parties/application/watch_party_notifier.dart`:
+    - Removed the hardcoded mock guest list (`Joshua OG`, `Sam`, `Mirarosue`) in `WatchPartyNotifier.build()`, initializing `guests: const []` and `totalPasses: 2` (`1/2` passes used).
+    - Updated `fetchLobby()` to always assign `guests: lobby.guests` directly from `GET /api/parties/lobby` (even when `status == "not_created"` and `guests: []`).
+- **Explanation:**
+  - Ensures the guest passes ring and counter display `1/2` by default when `guests` is empty (`maxGuests: 1`, `guests: []`) and that the guest list directly reflects the `guests` array returned by `GET /api/parties/lobby`.
+- **General Project Impact:**
+  - Eliminates stale mock guest entries so the Lobby and Host Party screens accurately mirror live backend lobby data.
+
+---
+
+### 2. Mobile Bearer Auth, Pre-Premiere Watch Party Lobby APIs, Real-Time Lobby Events, Swipeable Guest Actions & Guest vs Host Flows
+- **What Was Added / Modified:**
+  - **Mobile Bearer Token Auth (`lib/core/network/http_service.dart`, `lib/features/auth/`):**
+    - Added `HttpService.setBearerToken(token)` attaching `Authorization: Bearer <accessToken>` on all host, lobby, and playback calls.
+    - Updated `MagicLinkSession` and `MagicLinkSessionDto` to parse `accessToken`, `isHost`, `inviteToken`, and `partyId`, and configured `AuthRepositoryImpl.verifyMagicLink` to set the Bearer token on `HttpService`.
+    - Added `Validators.inviteTokenFromUrl` and updated `EnterLinkScreen` to support guest invite links via `POST /api/parties/join-lobby`.
+  - **Watch Party Lobby & Guest Management Endpoints (`lib/features/parties/`):**
+    - `POST /api/parties/invites`: Implemented `PartiesRepository.sendInvites` and wired `WatchPartyNotifier.inviteGuest`.
+    - `DELETE /api/parties/:partyId/invites`: Implemented `PartiesRepository.removeInvite` and `WatchPartyNotifier.removeGuestInvite(email)` to delete an invited guest and free their pass slot.
+    - `POST /api/parties/:partyId/invites/resend`: Implemented `PartiesRepository.resendInvite` and `WatchPartyNotifier.resendGuestInvite(email)`.
+    - `POST /api/parties/join-lobby`: Implemented `PartiesRepository.joinLobby` returning `{ partyId, status, guestName, hostOnline, guests, accessToken, socketToken, film }` and setting the guest's `Authorization: Bearer <accessToken>`.
+    - `GET /api/parties/lobby`: Implemented `PartiesRepository.getLobby` (`?ticketId=<id>` or `?partyId=<id>`) and `WatchPartyNotifier.fetchLobby`.
+  - **Real-Time Socket.IO Lobby Events (`lib/features/parties/data/parties_repository_impl.dart`):**
+    - Added listeners for `lobbyUpdated` (`Stream<WatchParty> lobbyUpdates`) and `partyStarted` (`Stream<PartyStartedEvent> partyStartedEvents`).
+  - **Swipe-Left Guest Card Actions (`lib/features/parties/presentation/host_party_screen.dart`):**
+    - Replaced static guest rows with `_SwipeableGuestCard` supporting swipe-left (and tap-to-reveal) action buttons for **Resend** (`Icons.send_outlined`) and **Delete** (`Icons.delete_outline`).
+  - **Guest vs Host UI & Waiting-for-Host Dialog (`lobby_screen.dart`, `player_screen.dart`, `playback_notifier.dart`):**
+    - On `LobbyScreen`, when the viewer is a guest (`!isHost`), the entire Guest Passes card (`Invite to party` / `See guest list`) is hidden and the primary button displays **`Join Premiere`** instead of **`Start Premiere`**.
+    - In `PlaybackNotifier`, handled HTTP `409` (`{ partyStatus: "waiting", partyId }`) when a guest attempts playback before the host starts by transitioning `PlayerScreen` to `_WaitingForHostDialog` (an informatory dialog without action buttons telling the guest to wait for the host to start the premiere) and automatically starting playback as soon as Socket.IO `partyStarted` fires.
+- **Explanation:**
+  - Implements the complete mobile Bearer token flow, pre-premiere Watch Party invitation CRUD, guest wait-lobby entry, real-time `lobbyUpdated` and `partyStarted` Socket.IO synchronization, swipe-left guest management, and guest waiting dialog.
+- **General Project Impact:**
+  - Enables hosts and guests to coordinate in the Watch Party lobby before and during a premiere with real-time slot management and automatic stream synchronization.
+
+---
+
+### 2. Dynamic Watch Party Guest Passes (`bundle_2` / `bundle_4`), Button State & Snackbar Styling
+- **What Was Added / Modified:**
+  - `lib/features/auth/domain/magic_link_session.dart`:
+    - Added `totalPasses` getter returning `2` for `'bundle_2'`, `4` for `'bundle_4'`, and `1` for `'single'`.
+  - `lib/features/parties/domain/watch_party.dart`:
+    - Updated `usedPasses` to start at `1` (counting the host: `(1 + guests.length).clamp(1, totalPasses)`) and `hasPassesRemaining` to `usedPasses < totalPasses`.
+  - `lib/features/parties/application/watch_party_notifier.dart`:
+    - Retained the initial seeded mock guest list (`Joshua OG`, `Sam`, `Mirarosue`) in `WatchPartyNotifier.build()` until the backend guest-list endpoint is provided.
+    - Added `configureForTicket({required String ticketType, String? filmId})` to sync `totalPasses` (`2` or `4`) from the verified `MagicLinkSession`.
+  - `lib/features/parties/presentation/lobby_screen.dart`:
+    - Synced `WatchPartyNotifier.configureForTicket` with the authenticated `MagicLinkSession`.
+    - Updated `_GuestPassesCard` button text to change from **`Invite to party`** to **`See guest list`** once all passes for the ticket have been sent (`!party.hasPassesRemaining`).
+  - `lib/features/parties/presentation/host_party_screen.dart`:
+    - Synced `WatchPartyNotifier.configureForTicket` on init.
+    - Wrapped the disabled **`Send Magic Link`** button (`!party.hasPassesRemaining`) so tapping it when disabled triggers a `SnackBar` informing the user that maximum invites have been reached for that ticket.
+    - Styled the magic-link sent success `SnackBar` with a red background (`AppColors.primary`) and black text (`Colors.black`).
+  - `test/features/parties/host_party_screen_test.dart`:
+    - Updated initial guest list assertion to match the default empty guest list (`1/4` host-counted state).
+- **Explanation:**
+  - Ensures `bundle_2` (`1/2` -> `2/2`) and `bundle_4` (`1/4` -> `4/4`) reflect the verified ticket capacity counting the host first, switches the Lobby CTA to `"See guest list"` when full, notifies the host via snackbar when tapping the disabled `"Send Magic Link"` button at max capacity, and applies the required red/black success snackbar theme.
+- **General Project Impact:**
+  - Aligns the Watch Party pass counter, Lobby button state, and Host Party invite feedback with the backend's `ticketType` verification payload.
+
+---
+
 ## [24/11/26] - 2026-11-24
 
 ### 1. Edge-to-Edge Marquee Poster, Persistent Top Border Radius on Scroll & Upcoming Empty State Copy

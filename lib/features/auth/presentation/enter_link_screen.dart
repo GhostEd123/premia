@@ -6,6 +6,7 @@ import '../../../core/routing/route_paths.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/validators.dart';
 import '../../../core/widgets/app_button.dart';
+import '../../parties/application/watch_party_notifier.dart';
 import '../application/auth_notifier.dart';
 
 /// Lets a ticket holder open their emailed magic link. Accepts either a
@@ -41,15 +42,44 @@ class _EnterLinkScreenState extends ConsumerState<EnterLinkScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    final token = Validators.magicLinkToken(_input.text);
+  Future<void> _submit() async {
+    final raw = _input.text;
+    final authNotifier = ref.read(authNotifierProvider.notifier);
+    final watchPartyNotifier = ref.read(watchPartyNotifierProvider.notifier);
+
+    final inviteToken = Validators.inviteTokenFromUrl(raw);
+    if (inviteToken != null) {
+      setState(() => _inputError = null);
+      final lobby = await watchPartyNotifier.joinGuestLobby(inviteToken);
+      if (lobby != null) {
+        authNotifier.setGuestSession(
+          inviteToken: inviteToken,
+          partyId: lobby.partyId,
+          filmId: lobby.filmId,
+          accessToken: lobby.accessToken,
+          guestName: lobby.hostName,
+        );
+        if (mounted) {
+          context.go(RoutePaths.lobby, extra: lobby.film);
+        }
+      } else if (mounted) {
+        setState(
+          () => _inputError =
+              ref.read(watchPartyNotifierProvider).inviteError ??
+              'Could not join watch party lobby.',
+        );
+      }
+      return;
+    }
+
+    final token = Validators.magicLinkToken(raw);
     setState(
       () => _inputError = token == null
           ? 'Paste the link from your email.'
           : null,
     );
     if (token != null) {
-      ref.read(authNotifierProvider.notifier).verifyMagicLink(token);
+      await authNotifier.verifyMagicLink(token);
     }
   }
 
@@ -57,10 +87,15 @@ class _EnterLinkScreenState extends ConsumerState<EnterLinkScreen> {
   Widget build(BuildContext context) {
     ref.listen(authNotifierProvider, (prev, next) {
       if (next.isAuthenticated && prev?.isAuthenticated != true) {
+        if (next.magicLinkSession?.isHost == false) {
+          return;
+        }
         context.go(RoutePaths.marquee);
       }
     });
     final auth = ref.watch(authNotifierProvider);
+    final isJoiningLobby =
+        ref.watch(watchPartyNotifierProvider.select((s) => s.isSubmittingInvite));
 
     return Scaffold(
       appBar: AppBar(backgroundColor: Colors.transparent),
@@ -97,7 +132,7 @@ class _EnterLinkScreenState extends ConsumerState<EnterLinkScreen> {
             const SizedBox(height: 24),
             AppButton(
               label: 'Verify',
-              isLoading: auth.isLoading,
+              isLoading: auth.isLoading || isJoiningLobby,
               onPressed: _submit,
             ),
             const SizedBox(height: 16),

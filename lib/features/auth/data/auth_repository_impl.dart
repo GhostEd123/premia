@@ -13,7 +13,12 @@ class AuthRepositoryImpl implements AuthRepository {
   @override
   Future<MagicLinkSession> verifyMagicLink(String token) async {
     final raw = await _http.get('/auth/verify', query: {'token': token});
-    return MagicLinkSessionDto.fromJson(JsonUtils.asMap(raw)).toEntity();
+    final session =
+        MagicLinkSessionDto.fromJson(JsonUtils.asMap(raw)).toEntity();
+    if (session.accessToken != null && session.accessToken!.isNotEmpty) {
+      _http.setBearerToken(session.accessToken);
+    }
+    return session;
   }
 
   @override

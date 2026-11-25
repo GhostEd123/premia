@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +9,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/common_widgets.dart';
+import '../../auth/application/auth_notifier.dart';
 import '../../films/application/films_notifier.dart';
 import '../../films/domain/film.dart';
 import '../application/watch_party_notifier.dart';
@@ -26,10 +29,81 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
   bool _addedToCalendar = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncTicketCapacity());
+  }
+
+  void _syncTicketCapacity() {
+    final session = ref.read(authNotifierProvider).magicLinkSession;
+    if (session != null) {
+      // log("CHECKING TICKET TYPE: ${session.ticketType}");
+      ref
+          .read(watchPartyNotifierProvider.notifier)
+          .configureForTicket(
+            ticketType: session.ticketType,
+            filmId: session.filmId ?? widget.film?.id,
+          );
+      ref
+          .read(watchPartyNotifierProvider.notifier)
+          .fetchLobby(
+            ticketId: session.claimedTicketId,
+            partyId: session.partyId,
+          );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // If film not passed via extra, watch nowShowingFilmProvider
+    ref.listen(authNotifierProvider, (prev, next) {
+      final session = next.magicLinkSession;
+      if (session != null && prev?.magicLinkSession != session) {
+        ref
+            .read(watchPartyNotifierProvider.notifier)
+            .configureForTicket(
+              ticketType: session.ticketType,
+              filmId: session.filmId ?? widget.film?.id,
+            );
+        ref
+            .read(watchPartyNotifierProvider.notifier)
+            .fetchLobby(
+              ticketId: session.claimedTicketId,
+              partyId: session.partyId,
+            );
+      }
+    });
+
+    final partyState = ref.watch(watchPartyNotifierProvider);
+    final party = partyState.party;
+    final session = ref.watch(authNotifierProvider).magicLinkSession;
+    final isHost = (session?.isHost ?? true) && party.isHost;
+
+    // If guest is on the lobby screen and the host starts the premiere, auto-route to player
+    ref.listen(
+      watchPartyNotifierProvider.select((s) => s.partyStartedEvent),
+      (prev, next) {
+        if (next != null && prev != next && !isHost) {
+          final isTopCurrentRoute = ModalRoute.of(context)?.isCurrent ?? true;
+          if (!isTopCurrentRoute) return;
+          final filmForPlayer =
+              widget.film ??
+              party.film ??
+              ref.read(nowShowingFilmProvider).asData?.value;
+          if (mounted) {
+            context.push(
+              RoutePaths.player,
+              extra: filmForPlayer?.title ?? 'Premiere',
+            );
+          }
+        }
+      },
+    );
+
+    // If film not passed via extra, watch party.film or nowShowingFilmProvider
     final activeFilm =
-        widget.film ?? ref.watch(nowShowingFilmProvider).asData?.value;
+        widget.film ??
+        party.film ??
+        ref.watch(nowShowingFilmProvider).asData?.value;
 
     if (activeFilm == null) {
       return Scaffold(
@@ -41,8 +115,6 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
       );
     }
 
-    final partyState = ref.watch(watchPartyNotifierProvider);
-    final party = partyState.party;
     final isUpcoming = activeFilm.isUpcoming;
     final start = activeFilm.premiereStart;
     final end = activeFilm.premiereEnd;
@@ -58,7 +130,13 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
             backgroundColor: AppColors.background,
             leading: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => context.pop(),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go(RoutePaths.marquee);
+                }
+              },
             ),
             flexibleSpace: FlexibleSpaceBar(
               background: Stack(
@@ -205,20 +283,23 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
                     ),
                   const SizedBox(height: 14),
                   AppButton(
-                    label: 'Start Premiere',
+                    label: isHost ? 'Start Premiere' : 'Join Premiere',
                     onPressed: () {
-                      // Trigger playback authorization
+                      // Trigger playback authorization (Host starts, Guest joins)
                       context.push(RoutePaths.player, extra: activeFilm.title);
                     },
                   ),
                 ],
-                const SizedBox(height: 24),
-                // --- Guest Passes Card ---
-                _GuestPassesCard(
-                  usedPasses: party.usedPasses,
-                  totalPasses: party.totalPasses,
-                  onInvite: () => context.push(RoutePaths.hostParty),
-                ),
+                if (isHost) ...[
+                  const SizedBox(height: 24),
+                  // --- Guest Passes Card (Host only) ---
+                  _GuestPassesCard(
+                    usedPasses: party.usedPasses,
+                    totalPasses: party.totalPasses,
+                    hasPassesRemaining: party.hasPassesRemaining,
+                    onInvite: () => context.push(RoutePaths.hostParty),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 // --- House Rules Card ---
                 const _HouseRulesCard(),
@@ -320,15 +401,21 @@ class _GuestPassesCard extends StatelessWidget {
   const _GuestPassesCard({
     required this.usedPasses,
     required this.totalPasses,
+    required this.hasPassesRemaining,
     required this.onInvite,
   });
 
   final int usedPasses;
   final int totalPasses;
+  final bool hasPassesRemaining;
   final VoidCallback onInvite;
 
   @override
   Widget build(BuildContext context) {
+    final buttonText = hasPassesRemaining
+        ? 'Invite to party'
+        : 'See guest list';
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -389,18 +476,22 @@ class _GuestPassesCard extends StatelessWidget {
                 color: AppColors.primary,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Text(
-                    'Invite to party',
-                    style: TextStyle(
+                    buttonText,
+                    style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                     ),
                   ),
-                  SizedBox(width: 6),
-                  Icon(Icons.arrow_forward, size: 14, color: Colors.white),
+                  const SizedBox(width: 6),
+                  const Icon(
+                    Icons.arrow_forward,
+                    size: 14,
+                    color: Colors.white,
+                  ),
                 ],
               ),
             ),
