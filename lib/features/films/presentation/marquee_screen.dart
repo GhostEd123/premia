@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/routing/route_paths.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/calendar_launcher.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/common_widgets.dart';
@@ -331,7 +332,7 @@ class _NowShowingCard extends ConsumerWidget {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      _CalendarIconButton(filmTitle: film.title),
+                      _CalendarIconButton(film: film),
                     ],
                   ),
                   const _HavePassLink(),
@@ -440,9 +441,9 @@ class _CountdownColon extends StatelessWidget {
 }
 
 class _CalendarIconButton extends StatefulWidget {
-  const _CalendarIconButton({required this.filmTitle});
+  const _CalendarIconButton({required this.film});
 
-  final String filmTitle;
+  final Film film;
 
   @override
   State<_CalendarIconButton> createState() => _CalendarIconButtonState();
@@ -451,26 +452,25 @@ class _CalendarIconButton extends StatefulWidget {
 class _CalendarIconButtonState extends State<_CalendarIconButton> {
   bool _added = false;
 
+  Future<void> _openCalendar() async {
+    final film = widget.film;
+    setState(() => _added = true);
+    await CalendarLauncher.addPremiereToCalendar(
+      title: film.title,
+      description: film.description,
+      premiereStart: film.premiereStart,
+      premiereEnd: film.premiereEnd,
+      durationMinutes: film.durationMinutes,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: AppDimens.controlHeight,
       height: AppDimens.controlHeight,
       child: OutlinedButton(
-        onPressed: () {
-          setState(() => _added = !_added);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: AppColors.surfaceHigh,
-              content: Text(
-                _added
-                    ? '${widget.filmTitle} added to calendar!'
-                    : 'Removed from calendar',
-              ),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        },
+        onPressed: _openCalendar,
         style: OutlinedButton.styleFrom(
           padding: EdgeInsets.zero,
           foregroundColor: Colors.white,

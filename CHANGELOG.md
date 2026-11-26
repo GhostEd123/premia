@@ -11,7 +11,39 @@ All notable changes to the Premia project will be documented in this file.
 
 ## [26/11/26] - 2026-11-26
 
-### 1. Align Watch Party Playback Sync with Backend `videoAction` / `syncVideo` & `timeUpdate` / `syncTimestamp` Specification
+### 1. Native Calendar Event Launcher for Upcoming & Live Premieres
+- **What Was Added / Modified:**
+  - `lib/core/utils/calendar_launcher.dart` **(NEW)**:
+    - Created `CalendarLauncher.addPremiereToCalendar` (accepting `num? durationMinutes` to match `Film.durationMinutes`) which computes the event start and end time:
+      - For **upcoming premieres** (`premiereStart > now`), sets the event start time to `premiereStart` and duration to `film.durationMinutes` (defaulting to 120 minutes).
+      - For **live premieres** (`premiereStart <= now < premiereEnd`), picks a time within the active premiere window (`now + 30 minutes`, clamped so the film's runtime finishes before `premiereEnd`).
+    - Launches the device's native Calendar insert screen on Android (`Intent.ACTION_INSERT` with `CalendarContract.Events.CONTENT_URI`) and falls back to Google Calendar's universal event creation template URL (`https://calendar.google.com/calendar/render?action=TEMPLATE...`) on iOS / web.
+  - `android/app/src/main/kotlin/com/example/premia/MainActivity.kt`:
+    - Added `"addCalendarEvent"` handler on the `premia/screen_protection` `MethodChannel` to launch `Intent(Intent.ACTION_INSERT)` with `CalendarContract.Events.CONTENT_URI`, pre-populating `TITLE`, `DESCRIPTION`, `EVENT_LOCATION`, `EXTRA_EVENT_BEGIN_TIME`, and `EXTRA_EVENT_END_TIME`.
+  - `lib/features/films/presentation/marquee_screen.dart`, `lib/features/films/presentation/upcoming_film_screen.dart`, & `lib/features/parties/presentation/lobby_screen.dart`:
+    - Wired `_CalendarIconButton` next to the `"Get a Ticket"` button on `MarqueeScreen` and `UpcomingFilmScreen` (as well as `"Add to Calendar"` on `LobbyScreen`) to invoke `CalendarLauncher.addPremiereToCalendar(...)`.
+- **Explanation:**
+  - Replaces the placeholder snackbar on the calendar icon button with real navigation to the user's calendar app pre-filled with the movie title, description, and premiere time (or an in-window screening time for live premieres).
+- **General Project Impact:**
+  - Enables viewers to save upcoming or active premieres directly into their device calendar with one tap.
+
+---
+
+### 2. Route to Marquee Screen & Reset Single-Viewing Session on Premiere Ended "Close"
+- **What Was Added / Modified:**
+  - `lib/features/parties/application/watch_party_notifier.dart`:
+    - Added `resetPartySession()` to disconnect the Watch Party Socket.IO session and reset `WatchPartyState` back to its clean uninitialized state.
+  - `lib/features/playback/presentation/player_screen.dart`:
+    - Added `_closeAfterPremiereEnded()` which resets the watch party session, signs out/clears the consumed ticket/guest session (`authNotifier.signOut()`), and routes both host and guest directly to `RoutePaths.marquee` (`context.go(RoutePaths.marquee)`).
+    - Wired `_Phase.ended` (`"The premiere has ended. Thanks for watching!"`) `onPrimary` ("Close" button) and `onClose` (top-left close icon) to `_closeAfterPremiereEnded`.
+- **Explanation:**
+  - Ensures that when a premiere ends and the user taps **Close**, both hosts and guests are taken directly to the Marquee screen (instead of popping back to the Lobby) with the consumed ticket session cleared so the Marquee screen shows the ticket purchase CTA (`Get a Ticket`) rather than `Start Premiere` / `Go to Lobby`.
+- **General Project Impact:**
+  - Enforces the single-viewing ticket lifecycle at the end of playback and prevents users from returning to a finished watch party lobby.
+
+---
+
+### 2. Align Watch Party Playback Sync with Backend `videoAction` / `syncVideo` & `timeUpdate` / `syncTimestamp` Specification
 - **What Was Added / Modified:**
   - `lib/features/parties/data/parties_repository_impl.dart`:
     - Aligned host Socket.IO emissions with Section 4 of `PREMIA_BACKEND_CHANGES 2.md` (`src/sockets/watchParty.js`):

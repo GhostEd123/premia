@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../core/constants/app_constants.dart';
+import '../../../core/routing/route_paths.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
@@ -481,6 +482,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  Future<void> _closeAfterPremiereEnded() async {
+    final watchPartyNotifier = ref.read(watchPartyNotifierProvider.notifier);
+    final authNotifier = ref.read(authNotifierProvider.notifier);
+    watchPartyNotifier.resetPartySession();
+    await authNotifier.signOut();
+    if (!mounted) return;
+    context.go(RoutePaths.marquee);
+  }
+
   // --- UI ---
 
   @override
@@ -552,8 +562,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           _Phase.ended => _MessageView(
             message: 'The premiere has ended. Thanks for watching!',
             primaryLabel: 'Close',
-            onPrimary: () => context.pop(),
-            onClose: () => context.pop(),
+            onPrimary: _closeAfterPremiereEnded,
+            onClose: _closeAfterPremiereEnded,
           ),
           _Phase.playing => captured ? const _CaptureBlocked() : _buildPlayer(),
         },

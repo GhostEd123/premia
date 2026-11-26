@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/routing/route_paths.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/calendar_launcher.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/common_widgets.dart';
@@ -151,20 +152,14 @@ class _UpcomingFilmScreenState extends State<UpcomingFilmScreen> {
                             width: AppDimens.controlHeight,
                             height: AppDimens.controlHeight,
                             child: OutlinedButton(
-                              onPressed: () {
-                                setState(
-                                  () => _addedToCalendar = !_addedToCalendar,
-                                );
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    backgroundColor: AppColors.surfaceHigh,
-                                    content: Text(
-                                      _addedToCalendar
-                                          ? '${film.title} added to calendar!'
-                                          : 'Removed from calendar',
-                                    ),
-                                    duration: const Duration(seconds: 2),
-                                  ),
+                              onPressed: () async {
+                                setState(() => _addedToCalendar = true);
+                                await CalendarLauncher.addPremiereToCalendar(
+                                  title: film.title,
+                                  description: film.description,
+                                  premiereStart: film.premiereStart,
+                                  premiereEnd: film.premiereEnd,
+                                  durationMinutes: film.durationMinutes,
                                 );
                               },
                               style: OutlinedButton.styleFrom(

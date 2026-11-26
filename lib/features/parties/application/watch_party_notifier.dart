@@ -371,6 +371,22 @@ class WatchPartyNotifier extends Notifier<WatchPartyState> {
     } catch (_) {}
   }
 
+  /// Resets the watch party state and disconnects the socket after a premiere ends.
+  void resetPartySession() {
+    disconnectSocket();
+    state = WatchPartyState(
+      party: const WatchParty(
+        partyId: '',
+        hostName: 'Host',
+        filmId: '',
+        status: 'not_created',
+        totalPasses: 2,
+        guests: [],
+      ),
+      quickMessages: state.quickMessages ?? _defaultQuickMessages,
+    );
+  }
+
   Future<void> _loadQuickMessages() async {
     try {
       final messages = await ref.read(getQuickMessagesProvider)();

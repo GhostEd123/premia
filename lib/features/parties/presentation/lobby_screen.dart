@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/routing/route_paths.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/calendar_launcher.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/app_button.dart';
 import '../../../core/widgets/common_widgets.dart';
@@ -226,17 +227,14 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
                     icon: _addedToCalendar
                         ? Icons.check
                         : Icons.calendar_today_outlined,
-                    onPressed: () {
-                      setState(() => _addedToCalendar = !_addedToCalendar);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            _addedToCalendar
-                                ? 'Added to calendar!'
-                                : 'Removed from calendar',
-                          ),
-                          duration: const Duration(seconds: 2),
-                        ),
+                    onPressed: () async {
+                      setState(() => _addedToCalendar = true);
+                      await CalendarLauncher.addPremiereToCalendar(
+                        title: activeFilm.title,
+                        description: activeFilm.description,
+                        premiereStart: activeFilm.premiereStart,
+                        premiereEnd: activeFilm.premiereEnd,
+                        durationMinutes: activeFilm.durationMinutes,
                       );
                     },
                   ),

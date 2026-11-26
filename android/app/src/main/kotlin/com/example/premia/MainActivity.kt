@@ -1,5 +1,7 @@
 package com.example.premia
 
+import android.content.Intent
+import android.provider.CalendarContract
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -22,6 +24,28 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "isCaptured" -> result.success(false)
+                    "addCalendarEvent" -> {
+                        try {
+                            val title = call.argument<String>("title") ?: "Premia Premiere"
+                            val description = call.argument<String>("description") ?: ""
+                            val location = call.argument<String>("location") ?: "Premia Digital Cinema"
+                            val beginTime = call.argument<Number>("beginTime")?.toLong() ?: System.currentTimeMillis()
+                            val endTime = call.argument<Number>("endTime")?.toLong() ?: (beginTime + 7200000L)
+
+                            val intent = Intent(Intent.ACTION_INSERT).apply {
+                                data = CalendarContract.Events.CONTENT_URI
+                                putExtra(CalendarContract.Events.TITLE, title)
+                                putExtra(CalendarContract.Events.DESCRIPTION, description)
+                                putExtra(CalendarContract.Events.EVENT_LOCATION, location)
+                                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, beginTime)
+                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endTime)
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
